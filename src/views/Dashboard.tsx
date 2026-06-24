@@ -25,7 +25,11 @@ import {
   RiSendPlaneFill,
   RiArrowUpLine,
   RiSettings4Line,
-  RiCheckLine
+  RiCheckLine,
+  RiClipboardLine,
+  RiNotification3Line,
+  RiMailSendLine,
+  RiCodeSSlashLine
 } from 'react-icons/ri'
 import { FaMemory } from 'react-icons/fa6'
 import { GiTinker } from 'react-icons/gi'
@@ -70,6 +74,42 @@ const TypingText = ({ text, isLatest }: { text: string, isLatest: boolean }) => 
   return <span>{displayedText}</span>
 }
 
+const VoiceWaveform: React.FC<{ active: boolean }> = ({ active }) => {
+  if (!active) return null;
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -10 }}
+      className="flex items-center justify-between py-2.5 px-4 bg-red-500/10 border border-red-500/20 rounded-xl my-3"
+    >
+      <div className="flex items-center gap-2">
+        <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+        <span className="text-[10px] uppercase font-bold tracking-widest text-red-400 font-mono">
+          LISTENING LIVE
+        </span>
+      </div>
+      <div className="flex items-end gap-[3px] h-5 pr-1">
+        {[8, 16, 24, 14, 20, 10, 18, 12, 16, 8].map((maxH, i) => (
+          <motion.div
+            key={i}
+            className={`w-[3px] rounded-full ${i % 2 === 0 ? 'bg-red-500' : 'bg-red-400'}`}
+            animate={{
+              height: [4, maxH, 4]
+            }}
+            transition={{
+              duration: 0.5 + (i * 0.08) % 0.4,
+              repeat: Infinity,
+              ease: "easeInOut",
+            }}
+          />
+        ))}
+      </div>
+    </motion.div>
+  );
+};
+
 export default function DashboardView({
   props,
   stats,
@@ -97,6 +137,150 @@ export default function DashboardView({
   const [intelligenceFeed, setIntelligenceFeed] = useState<{id: number, text: string, type: 'insight' | 'status'}[]>([])
   const [isPopupOpen, setIsPopupOpen] = useState(false)
   const [questionText, setQuestionText] = useState('')
+  const [isListeningSpeech, setIsListeningSpeech] = useState(false)
+  const recognitionRef = useRef<any>(null)
+  const chatEndRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [chatHistory.length])
+
+  useEffect(() => {
+    if (!isPopupOpen) {
+      if (recognitionRef.current) {
+        recognitionRef.current.abort()
+      }
+      setIsListeningSpeech(false)
+    }
+  }, [isPopupOpen])
+
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.abort()
+      }
+    }
+  }, [])
+
+  const toggleSpeechRecognition = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      alert("Speech recognition is not supported in this browser.")
+      return
+    }
+
+    if (isListeningSpeech) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
+      }
+      setIsListeningSpeech(false)
+    } else {
+      playAction()
+      const recognition = new SpeechRecognition()
+      recognition.continuous = true
+      recognition.interimResults = true
+      recognition.lang = 'en-US'
+
+      recognition.onstart = () => {
+        setIsListeningSpeech(true)
+      }
+
+      recognition.onresult = (event: any) => {
+        let finalTranscript = ''
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript
+          }
+        }
+        if (finalTranscript) {
+          setQuestionText(prev => {
+            const trimmed = prev.trim()
+            return trimmed ? `${trimmed} ${finalTranscript.trim()}` : finalTranscript.trim()
+          })
+        }
+      }
+
+      recognition.onerror = (event: any) => {
+        console.error("Speech recognition error", event.error)
+        setIsListeningSpeech(false)
+      }
+
+      recognition.onend = () => {
+        setIsListeningSpeech(false)
+      }
+
+      recognitionRef.current = recognition
+      recognition.start()
+    }
+  }
+
+  const triggerQuickAction = async (actionId: string) => {
+    playAction();
+    let promptToSend = '';
+
+    if (actionId === 'clipboard') {
+      try {
+        if (navigator.clipboard) {
+          const text = await navigator.clipboard.readText();
+          if (text && text.trim()) {
+            promptToSend = `Please summarize the following text from my clipboard:\n\n"${text.trim()}"`;
+          } else {
+            promptToSend = "Please check if there is any content in my clipboard to summarize. (My clipboard currently appears to be empty)";
+          }
+        } else {
+          promptToSend = "Summarize my current clipboard contents.";
+        }
+      } catch (err) {
+        console.warn('Clipboard read failed: ', err);
+        promptToSend = "Summarize my active clipboard content.";
+      }
+    } else if (actionId === 'reminder') {
+      promptToSend = "Set a reminder to check my incoming emails and tasks in 30 minutes.";
+    } else if (actionId === 'email') {
+      promptToSend = "Draft a professional follow-up email regarding the latest project updates.";
+    } else if (actionId === 'code') {
+      promptToSend = "Help me write a clear, commented TypeScript function to fetch and format user metadata.";
+    }
+
+    if (promptToSend) {
+      if (onAskIris) {
+        onAskIris(promptToSend);
+      } else {
+        const { irisService } = await import('../services/Iris-voice-ai');
+        irisService.sendText(promptToSend);
+      }
+      setIsPopupOpen(false);
+    }
+  };
+
+  const quickActions = [
+    {
+      id: 'clipboard',
+      label: 'Summarize Clipboard',
+      icon: <RiClipboardLine className="text-emerald-400 group-hover:scale-110 transition-transform" size={16} />,
+      description: 'Summarizes active clipboard contents',
+    },
+    {
+      id: 'reminder',
+      label: 'Set Reminder',
+      icon: <RiNotification3Line className="text-blue-400 group-hover:scale-110 transition-transform" size={16} />,
+      description: 'Prompt IRIS to schedule a reminder',
+    },
+    {
+      id: 'email',
+      label: 'Draft Email',
+      icon: <RiMailSendLine className="text-pink-400 group-hover:scale-110 transition-transform" size={16} />,
+      description: 'Structure or draft professional email copy',
+    },
+    {
+      id: 'code',
+      label: 'Explain Code',
+      icon: <RiCodeSSlashLine className="text-purple-400 group-hover:scale-110 transition-transform" size={16} />,
+      description: 'Request code analysis or quick assistance',
+    }
+  ];
   const [quality, setQuality] = useState({ width: 1280, height: 720, frameRate: 60 })
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [currentTime, setCurrentTime] = useState(new Date())
@@ -490,7 +674,7 @@ export default function DashboardView({
                             }
                           }
                           setQuestionText('');
-                          const chatTab = document.getElementById('tab-CHAT') as HTMLButtonElement;
+                          const chatTab = document.getElementById('tab-ASK_IRIS') as HTMLButtonElement;
                           if (chatTab) chatTab.click();
                         }
                       }}
@@ -517,7 +701,7 @@ export default function DashboardView({
                                 }
                               }
                               setQuestionText('');
-                              const chatTab = document.getElementById('tab-CHAT') as HTMLButtonElement;
+                              const chatTab = document.getElementById('tab-ASK_IRIS') as HTMLButtonElement;
                               if (chatTab) chatTab.click();
                             }
                           }}
@@ -577,8 +761,8 @@ export default function DashboardView({
                           });
                         }
                         setQuestionText('');
-                        // Teleport to chat
-                        const chatTab = document.getElementById('tab-CHAT') as HTMLButtonElement;
+                        // Teleport to Ask Iris
+                        const chatTab = document.getElementById('tab-ASK_IRIS') as HTMLButtonElement;
                         if (chatTab) chatTab.click();
                       }
                     }}
@@ -593,8 +777,8 @@ export default function DashboardView({
                           });
                         }
                         setQuestionText('');
-                        // Teleport to chat
-                        const chatTab = document.getElementById('tab-CHAT') as HTMLButtonElement;
+                        // Teleport to Ask Iris
+                        const chatTab = document.getElementById('tab-ASK_IRIS') as HTMLButtonElement;
                         if (chatTab) chatTab.click();
                       }
                     }}
@@ -755,14 +939,14 @@ export default function DashboardView({
               <RiQuestionAnswerLine size={20} className="sm:w-[24px] sm:h-[24px]" aria-hidden="true" />
             </button>
 
-            {/* OpenClaw Feature Tool */}
+            {/* Coding / Workspace Tool */}
             <button
               onClick={() => {
-                const browserTab = document.getElementById('tab-BROWSER') as HTMLButtonElement;
-                if (browserTab) browserTab.click();
+                const codingTab = document.getElementById('tab-CODING') as HTMLButtonElement;
+                if (codingTab) codingTab.click();
               }}
-              aria-label="OpenClaw Automation"
-              title="Launch OpenClaw Browser Engine"
+              aria-label="Coding Workspace"
+              title="Launch Coding Workspace"
               className="relative cursor-pointer p-2 text-emerald-500 hover:text-emerald-400 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 rounded-full hover:bg-white/5"
             >
               <RiTerminalBoxLine size={20} className="sm:w-[24px] sm:h-[24px]" aria-hidden="true" />
@@ -799,17 +983,54 @@ export default function DashboardView({
 
               <h1 className="text-3xl font-bold tracking-tight">ASK IRIS</h1>
 
-              <p className="text-zinc-300">
-                Type your question below. IRIS will respond using voice if the system is active.
+              <p className="text-zinc-400 text-xs text-center border-b border-white/5 pb-3">
+                Speak or type your question. IRIS responds live.
               </p>
 
-              <div className="relative mt-6">
+              {/* Dynamic scrollable message/interaction bubbles stack */}
+              {chatHistory.length > 0 && (
+                <div className="mt-4 mb-2 max-h-[160px] overflow-y-auto px-1 py-1 flex flex-col gap-3 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent pr-1.5 border border-white/5 bg-black/40 rounded-xl">
+                  {chatHistory.map((msg, index) => (
+                    <motion.div
+                      key={index}
+                      initial={{ opacity: 0, scale: 0.98, y: 8 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
+                    >
+                      <span className={`text-[9px] font-mono tracking-widest uppercase mb-1 ${
+                        msg.role === 'user' ? 'text-[#00ffb3]/70' : 'text-zinc-500'
+                      }`}>
+                        {msg.role === 'user' ? 'User Input' : 'IRIS Response'}
+                      </span>
+                      <div
+                        className={`px-3.5 py-2.5 rounded-2xl text-[12.5px] leading-relaxed break-words whitespace-pre-wrap ${
+                          msg.role === 'user'
+                            ? 'bg-zinc-900/90 border border-[#00ffb3]/30 text-white rounded-tr-none'
+                            : 'bg-zinc-950/90 border border-white/5 text-zinc-300 rounded-tl-none'
+                        }`}
+                      >
+                        {msg.content}
+                      </div>
+                    </motion.div>
+                  ))}
+                  <div ref={chatEndRef} />
+                </div>
+              )}
+
+              <VoiceWaveform active={isListeningSpeech} />
+
+              <div className="relative mt-6 flex items-center">
                 <input
                   type="text"
                   value={questionText}
                   onChange={(e) => setQuestionText(e.target.value)}
-                  placeholder="Ask anything..."
-                  className="w-full bg-black text-white px-4 focus:outline-none focus:ring-2 focus:ring-[#00ffb3]/50 transition-all border border-[#00ffb3] rounded-xl"
+                  placeholder={isListeningSpeech ? "Listening... Speak your query" : "Ask anything..."}
+                  className={`w-full bg-black text-white pl-4 pr-12 h-12 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#00ffb3]/50 border transition-all ${
+                    isListeningSpeech 
+                      ? 'border-red-500/80 shadow-[0_0_15px_rgba(239,68,68,0.35)]' 
+                      : 'border-[#00ffb3]/40'
+                  }`}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       if (questionText.trim()) {
@@ -827,6 +1048,45 @@ export default function DashboardView({
                     }
                   }}
                 />
+                <button
+                  type="button"
+                  onClick={toggleSpeechRecognition}
+                  className={`absolute right-3 p-2 rounded-lg transition-all ${
+                    isListeningSpeech 
+                      ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 animate-pulse' 
+                      : 'text-zinc-400 hover:text-[#00ffb3] hover:bg-white/5'
+                  }`}
+                  title={isListeningSpeech ? "Stop listening" : "Speak instead of typing"}
+                >
+                  {isListeningSpeech ? <RiMicLine size={20} className="scale-110" /> : <RiMicOffLine size={20} />}
+                </button>
+              </div>
+
+              {/* Quick Action Grid */}
+              <div className="mt-4 border-t border-white/5 pt-3">
+                <span className="text-[10px] uppercase font-bold tracking-widest text-[#00ffb3] font-mono block mb-2 text-left">
+                  Quick Actions
+                </span>
+                <div className="grid grid-cols-2 gap-2">
+                  {quickActions.map(action => (
+                    <button
+                      key={action.id}
+                      onClick={() => triggerQuickAction(action.id)}
+                      className="group flex flex-col items-start p-3 bg-zinc-950 hover:bg-zinc-900 border border-white/5 hover:border-[#00ffb3]/40 rounded-xl transition-all text-left text-zinc-300"
+                      style={{ height: 'auto', width: '100%', marginTop: '0px' }}
+                    >
+                      <div className="flex items-center gap-1.5 mb-1">
+                        {action.icon}
+                        <span className="text-xs font-semibold text-zinc-100 group-hover:text-[#00ffb3] transition-colors">
+                          {action.label}
+                        </span>
+                      </div>
+                      <span className="text-[9.5px] leading-snug text-zinc-500 group-hover:text-zinc-600 line-clamp-1">
+                        {action.description}
+                      </span>
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <button
@@ -845,7 +1105,7 @@ export default function DashboardView({
                   }
                 }}
                 disabled={!questionText.trim()}
-                className="w-full h-[50px] mt-[15px] border-none rounded-xl font-bold cursor-pointer transition-all hover:bg-[#00d696] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed bg-[#00ffb3] text-black"
+                className="btn-iris-submit w-full h-[50px] mt-[15px] border-none rounded-xl font-bold cursor-pointer transition-all hover:bg-[#00d696] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed bg-[#00ffb3] text-black"
               >
                 Send
               </button>
@@ -853,23 +1113,14 @@ export default function DashboardView({
               {/* Dictation options */}
               <div className="mt-4 flex items-center justify-between border-t border-white/5 pt-3">
                 <button
-                  onClick={() => {
-                    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-                    if (SpeechRecognition) {
-                      const recognition = new SpeechRecognition();
-                      recognition.onresult = (event: any) => {
-                        const transcript = event.results[0][0].transcript;
-                        setQuestionText(prev => prev + ' ' + transcript);
-                      };
-                      recognition.start();
-                    } else {
-                      alert("Speech recognition is not supported in this browser.");
-                    }
-                  }}
-                  className="text-xs font-mono text-zinc-500 hover:text-[#00ffb3] transition-colors flex items-center gap-1.5"
-                  title="Dictate"
+                  onClick={toggleSpeechRecognition}
+                  className={`text-xs font-mono transition-colors flex items-center gap-1.5 ${
+                    isListeningSpeech ? 'text-red-400 font-bold animate-pulse' : 'text-zinc-500 hover:text-[#00ffb3]'
+                  }`}
+                  title={isListeningSpeech ? "Stop listening" : "Start speaking"}
                 >
-                  <RiMicLine size={16} /> DICTATE VOICE
+                  {isListeningSpeech ? <RiMicLine size={16} /> : <RiMicOffLine size={16} />} 
+                  {isListeningSpeech ? "STOP DICTATION" : "DICTATE VOICE"}
                 </button>
                 <div className="flex items-center gap-2">
                   <span className={`w-2 h-2 rounded-full ${isSystemActive ? "bg-emerald-500 animate-pulse" : "bg-zinc-600"}`} />

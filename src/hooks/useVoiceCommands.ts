@@ -27,7 +27,14 @@ export function useVoiceCommands(actions: VoiceCommandActions) {
       return;
     }
 
-    const recognition = new SpeechRecognition();
+    let recognition: any;
+    try {
+      recognition = new SpeechRecognition();
+    } catch (err) {
+      console.warn("Failed to instantiate SpeechRecognition (likely restricted by frame permissions):", err);
+      return;
+    }
+
     recognition.continuous = true;
     recognition.interimResults = false;
     recognition.lang = 'en-US';

@@ -15,6 +15,7 @@ import {
   RiFileList2Line,
   RiDragMove2Line
 } from 'react-icons/ri'
+import { Typewriter } from './Typewriter'
 
 interface Message {
   role: 'user' | 'assistant' | 'system'
@@ -210,7 +211,11 @@ export const MessageFeed: React.FC<MessageFeedProps> = ({
                             : 'bg-zinc-900/60 border-white/5 text-zinc-100 hover:bg-zinc-900/80 hover:border-white/10'
                       }`}>
                         <p className="text-xs font-mono leading-relaxed select-text pr-4 break-words">
-                          {msg.content}
+                          {!isUser && !isSystem ? (
+                            <Typewriter text={msg.content} animate={index === filteredHistory.length - 1} />
+                          ) : (
+                            msg.content
+                          )}
                         </p>
 
                         <button

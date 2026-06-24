@@ -209,7 +209,7 @@
   padding: 0 15px;
 }
 
-.ask-iris-card button {
+.ask-iris-card button.btn-iris-submit {
   width: 100%;
   height: 50px;
   margin-top: 15px;
@@ -219,5 +219,36 @@
   color: black;
   font-weight: bold;
   cursor: pointer;
+}
+
+/* ASK IRIS DYNAMIC GLOW ANIMATIONS */
+@keyframes ask-iris-processing-glow {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(168, 85, 247, 0.15), inset 0 0 5px rgba(168, 85, 247, 0.05);
+    border-color: rgba(168, 85, 247, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 25px rgba(168, 85, 247, 0.45), inset 0 0 10px rgba(168, 85, 247, 0.15);
+    border-color: rgba(168, 85, 247, 0.95);
+  }
+}
+
+@keyframes ask-iris-listening-glow {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.15), inset 0 0 5px rgba(239, 68, 68, 0.05);
+    border-color: rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 25px rgba(239, 68, 68, 0.45), inset 0 0 10px rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.95);
+  }
+}
+
+.ask-iris-card.processing {
+  animation: ask-iris-processing-glow 1.5s ease-in-out infinite !important;
+}
+
+.ask-iris-card.listening {
+  animation: ask-iris-listening-glow 1.5s ease-in-out infinite !important;
 }
 

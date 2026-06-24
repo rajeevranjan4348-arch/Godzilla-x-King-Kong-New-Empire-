@@ -13,6 +13,9 @@ import AppLockScreen from './components/AppLockScreen'
 export type VisionMode = 'camera' | 'screen' | 'image' | 'none'
 
 const IndexRoot = () => {
+  const [messages, setMessages] = useState<{ role: string, content: string }[]>([
+    { role: 'assistant', content: 'IRIS System Initialized. Awaiting input.' }
+  ])
   const [isAppLocked, setIsAppLocked] = useState(() => {
     return localStorage.getItem('iris_app_lock_type') && localStorage.getItem('iris_app_lock_type') !== 'none';
   });
@@ -50,18 +53,33 @@ const IndexRoot = () => {
   }, []);
 
   useEffect(() => {
+    let active = true;
     import('tesseract.js').then((Tesseract) => {
+      if (!active) return;
       Tesseract.createWorker('eng', 1, {
          workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@v5.1.1/dist/worker.min.js',
          langPath: 'https://tessdata.projectnaptha.com/4.0.0',
          corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@v5.0.0/tesseract-core.wasm.js',
       }).then(worker => {
-         workerRef.current = worker
-      })
-    })
+         if (active) {
+           workerRef.current = worker;
+           console.log("OCR worker loaded successfully.");
+         } else {
+           Promise.resolve(worker.terminate()).catch(() => {});
+         }
+      }).catch(err => {
+         console.warn("Tesseract worker failed to initialize. OCR capability is offline.", err);
+      });
+    }).catch(err => {
+      console.warn("Tesseract library failed to load dynamically.", err);
+    });
 
     return () => {
-      if (workerRef.current) workerRef.current.terminate()
+      active = false;
+      if (workerRef.current) {
+        Promise.resolve(workerRef.current.terminate()).catch(() => {});
+        workerRef.current = null;
+      }
     }
   }, [])
 
@@ -210,7 +228,14 @@ const IndexRoot = () => {
   }
 
   const startVision = async (mode: 'camera' | 'screen', quality?: { width: number, height: number, frameRate: number }) => {
-    if (!isSystemActive) return
+    if (!isSystemActive) {
+      try {
+        await toggleSystem();
+      } catch (err) {
+        console.error('Failed to auto-start system for vision:', err);
+        return;
+      }
+    }
     try {
       if (activeStreamRef.current) {
         activeStreamRef.current.getTracks().forEach((t) => t.stop())
@@ -270,10 +295,14 @@ const IndexRoot = () => {
     setIsVisionPaused(prev => !prev)
   }
 
-  const uploadImage = (file: File) => {
+  const uploadImage = async (file: File) => {
     if (!isSystemActive) {
-      alert("Please activate IRIS first.")
-      return
+      try {
+        await toggleSystem();
+      } catch (err) {
+        console.error('Failed to auto-start system for image upload:', err);
+        return;
+      }
     }
     
     // Stop any active camera/screen stream
@@ -542,6 +571,8 @@ const IndexRoot = () => {
           registerGetActiveTab={(handler) => {
             getActiveTabRef.current = handler
           }}
+          messages={messages}
+          setMessages={setMessages}
         />
         
         {/* Full-Screen Permissions Modal */}

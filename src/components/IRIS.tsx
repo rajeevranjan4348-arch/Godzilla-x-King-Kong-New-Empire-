@@ -107,6 +107,8 @@ export interface IrisProps {
   registerSetActiveTab?: (handler: (tab: string) => void) => void
   registerGetActiveTab?: (handler: () => string) => void
   sendText?: (text: string) => void
+  messages?: any[]
+  setMessages?: React.Dispatch<React.SetStateAction<any[]>>
 }
 
 import AppsView from '../views/Apps'
@@ -119,10 +121,7 @@ const glassPanel = 'bg-zinc-950/40 backdrop-blur-xl border border-white/5 rounde
 const TABS = [
   { id: 'DASHBOARD' },
   { id: 'APPS' },
-  { id: 'CHAT' },
   { id: 'CODING' },
-  { id: 'WORKFLOWS' },
-  { id: 'AGENT' },
   { id: 'SETTINGS' }
 ]
 
@@ -148,9 +147,11 @@ const IRIS = (props: IrisProps) => {
   
   const [stats, setStats] = useState<any>(null)
   const [time, setTime] = useState<Date>(new Date())
-  const [chatHistory, setChatHistory] = useState<any[]>([
+  const [localChatHistory, setLocalChatHistory] = useState<any[]>([
     { role: 'assistant', content: 'IRIS System Initialized. Awaiting input.' }
   ])
+  const chatHistory = props.messages !== undefined ? props.messages : localChatHistory
+  const setChatHistory = props.setMessages !== undefined ? props.setMessages : setLocalChatHistory
   const [isGenerating, setIsGenerating] = useState(false)
   const [isFeedVisible, setIsFeedVisible] = useState(false)
   const [showSourceModal, setShowSourceModal] = useState(false)
@@ -892,7 +893,6 @@ const IRIS = (props: IrisProps) => {
               </button>
               {[
                 { id: 'memory', icon: <RiBrainLine size={16} />, label: 'Memory' },
-                { id: 'calendar', icon: <RiCalendarEventLine size={16} />, label: 'Calendar' },
                 { id: 'terminal', icon: <RiTerminalBoxLine size={16} />, label: 'Terminal' },
                 { id: 'macros', icon: <RiCodeBoxLine size={16} />, label: 'Macros' },
                 { id: 'permissions', icon: <RiShieldFlashLine size={16} />, label: 'Permissions' }
@@ -921,17 +921,10 @@ const IRIS = (props: IrisProps) => {
           { id: 'DASHBOARD' },
           { id: 'ASK_IRIS' },
           { id: 'APPS' },
-          { id: 'CHAT' },
-          { id: 'BROWSER' },
-          { id: 'SYSTEM' },
-          { id: 'PLUGINS' },
           { id: 'CODING' },
-          { id: 'AGENT' },
-          { id: 'WORKFLOWS' },
           { id: 'TERMINAL' },
           { id: 'MEMORY' },
           { id: 'TASKS' },
-          { id: 'CALENDAR' },
           { id: 'DOCUMENTS' },
           { id: 'GALLERY' },
           { id: 'PROFILE' },
@@ -941,6 +934,7 @@ const IRIS = (props: IrisProps) => {
         ].map((tab) => (
           <button
             key={tab.id}
+            id={`tab-${tab.id}`}
             role="tab"
             aria-selected={activeTab === tab.id}
             aria-controls={`panel-${tab.id}`}
@@ -966,22 +960,17 @@ const IRIS = (props: IrisProps) => {
             { id: 'DASHBOARD', icon: <RiLayoutGridLine size={20} /> },
             { id: 'ASK_IRIS', icon: <RiQuestionAnswerLine size={20} /> },
             { id: 'APPS', icon: <RiApps2Line size={20} /> },
-            { id: 'CHAT', icon: <RiChat1Line size={20} /> },
-            { id: 'BROWSER', icon: <RiGlobalLine size={20} /> },
-            { id: 'SYSTEM', icon: <RiCpuLine size={20} /> },
-            { id: 'PLUGINS', icon: <RiPlugLine size={20} /> },
             { id: 'CODING', icon: <RiCodeBoxLine size={20} /> },
-            { id: 'AGENT', icon: <RiRobot2Line size={20} /> },
             { id: 'TERMINAL', icon: <RiTerminalBoxLine size={20} /> },
             { id: 'MEMORY', icon: <RiBrainLine size={20} /> },
             { id: 'TASKS', icon: <RiCheckLine size={20} /> },
-            { id: 'CALENDAR', icon: <RiCalendarEventLine size={20} /> },
             { id: 'DOCUMENTS', icon: <RiFileTextLine size={20} /> },
             { id: 'GALLERY', icon: <RiImageLine size={20} /> },
             { id: 'SETTINGS', icon: <RiSettings4Line size={20} /> },
           ].map((tab) => (
             <button
               key={tab.id}
+              id={`tab-${tab.id}`}
               onClick={() => { playTabSwitch(); setActiveTab(tab.id); setFocusedTab(tab.id); }}
               className={`p-3 rounded-xl transition-all flex items-center justify-center ${
                 activeTab === tab.id
@@ -1023,7 +1012,7 @@ const IRIS = (props: IrisProps) => {
             {activeTab === 'MEMORY' && <MemoryView />}
             
             <Suspense fallback={<ViewSkeleton />}>
-              {activeTab === 'ASK_IRIS' && <AskIrisView onAskIris={handleAskIris} isSystemActive={props.isSystemActive} />}
+              {activeTab === 'ASK_IRIS' && <AskIrisView onAskIris={handleAskIris} isSystemActive={props.isSystemActive} chatHistory={chatHistory} />}
               {activeTab === 'CODING' && <CodingView />}
               {activeTab === 'BROWSER' && <BrowserView />}
               {activeTab === 'SYSTEM' && <SystemView />}

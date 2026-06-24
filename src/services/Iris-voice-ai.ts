@@ -297,7 +297,14 @@ export class GeminiLiveService {
       const float = new Float32Array(pcm.length);
       for (let i = 0; i < pcm.length; i++) float[i] = pcm[i] / 32768;
       const buffer = this.audioContext.createBuffer(1, float.length, 24000);
-      buffer.copyToChannel(float, 0);
+      
+      // Fallback logic for various browser WebView environments
+      if (typeof buffer.copyToChannel === 'function') {
+        buffer.copyToChannel(float, 0);
+      } else {
+        buffer.getChannelData(0).set(float);
+      }
+      
       const src = this.audioContext.createBufferSource();
       src.buffer = buffer;
       src.connect(this.audioContext.destination);
@@ -385,7 +392,9 @@ export class GeminiLiveService {
       this.mediaStream = null;
     }
     if (this.audioContext && this.audioContext.state !== 'closed') {
-      this.audioContext.close();
+      try {
+        this.audioContext.close().catch(() => {});
+      } catch (e) {}
       this.audioContext = null;
     }
     this.analyser = null;

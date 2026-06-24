@@ -1,6 +1,5 @@
 import express from 'express';
 import path from 'path';
-import { createServer as createViteServer } from 'vite';
 import { WebSocketServer, WebSocket } from 'ws';
 import http from 'http';
 import dotenv from 'dotenv';
@@ -19,7 +18,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 async function startServer() {
   const app = express();
   const server = http.createServer(app);
-  const PORT = 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
   app.use(express.json({ limit: '50mb' }));
 
@@ -83,6 +82,58 @@ Strict Rule: Kabhi bhi ye mat kaho ki 'Main ek AI hoon aur dekh nahi sakta'. Tum
         errorMessage = `Gemini API Error: ${error.message}`;
       }
       res.status(error.status || 500).json({ error: errorMessage, details: error.message });
+    }
+  });
+
+  // Z. AI Chat Gateway Endpoint (Gemini-3.5-flash)
+  app.post('/api/z-ai/chat', async (req, res) => {
+    try {
+      if (!GEMINI_API_KEY) {
+        return res.status(500).json({ error: 'GEMINI_API_KEY is not configured on the server.' });
+      }
+
+      const { messages } = req.body;
+      if (!messages || !Array.isArray(messages)) {
+        return res.status(400).json({ error: 'Messages array is required.' });
+      }
+
+      const ai = new GoogleGenAI({ 
+        apiKey: GEMINI_API_KEY,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build'
+          }
+        }
+      });
+
+      const systemInstruction = `Tumhara naam [Z. AI] hai. Tum chat.z.ai ke official advanced model ho.
+Tumhare Guidelines:
+1. Tum hamesha user ko help, instructions aur accurate details do.
+2. Tum user se friendly aur intelligent tarike se baat karo. Jaisa input format/language ho (Hindi or English), usi bhasha mein seamless replies do.
+3. Code formatting ke liye standard markdown syntax blocks ka use karo.
+4. Tum direct system intelligence provider ho, toh pure clarity ke saath answers do.`;
+
+      // Transform generic roles to @google/genai format: 'user' -> 'user', 'assistant' -> 'model'
+      const contents = messages.map((msg: any) => ({
+        role: msg.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: msg.content || '' }]
+      }));
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.5-flash',
+        contents: contents,
+        config: {
+          systemInstruction: systemInstruction,
+          temperature: 0.7,
+        }
+      });
+
+      res.json({ text: response.text });
+    } catch (error: any) {
+      console.error('Z. AI API Error:', error);
+      res.status(error.status || 500).json({ 
+        error: error.message || 'An error occurred while communicating with Z. AI backend gateway.' 
+      });
     }
   });
 
@@ -350,6 +401,7 @@ Strict Rule: Kabhi bhi ye mat kaho ki 'Main ek AI hoon aur dekh nahi sakta'. Tum
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',

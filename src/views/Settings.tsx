@@ -37,7 +37,7 @@ const SettingsView = ({ isSystemActive }: SettingsProps) => {
   const [personality, setPersonality] = useState(localStorage.getItem('iris_personality') || '')
   const [userName, setUserName] = useState(localStorage.getItem('iris_user_name') || '')
   const [aiName, setAiName] = useState(localStorage.getItem('iris_ai_name') || 'IRIS')
-  const [defaultAiModel, setDefaultAiModel] = useState(localStorage.getItem('iris_default_model') || 'gemini-2.0-flash')
+  const [defaultAiModel, setDefaultAiModel] = useState(localStorage.getItem('iris_default_model') || 'gemini-3.5-flash')
   const [codeTheme, setCodeTheme] = useState(localStorage.getItem('iris_code_theme') || 'vscDarkPlus')
   
   const [geminiKey, setGeminiKey] = useState(localStorage.getItem('iris_custom_api_key') || '')
@@ -560,7 +560,7 @@ const SettingsView = ({ isSystemActive }: SettingsProps) => {
                     </span>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mt-1">
-                    {(['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash', 'llama-3.1-70b', 'claude-3.5-sonnet', 'gpt-4o', 'gemma-2-9b']).map((m) => (
+                    {(['gemini-3.5-flash', 'gemini-3.1-pro-preview', 'gemini-3.1-flash-lite', 'llama-3.1-70b', 'claude-3.5-sonnet', 'gpt-4o', 'gemma-2-9b']).map((m) => (
                       <button
                         key={m}
                         onClick={() => handleAiModelChange(m)}

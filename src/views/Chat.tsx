@@ -18,7 +18,9 @@ import {
   Terminal,
   Languages,
   Clock,
-  ArrowLeft
+  ArrowLeft,
+  Mic,
+  MicOff
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
@@ -56,6 +58,9 @@ export default function ChatView({ setActiveTab }: ChatViewProps) {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
   // Sound feedback
   const playSfx = (freqStart = 600, freqEnd = 900, duration = 0.12) => {
     try {
@@ -75,6 +80,80 @@ export default function ChatView({ setActiveTab }: ChatViewProps) {
       // Audio fallback
     }
   };
+
+  const toggleSpeech = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Speech Recognition is not supported in this browser. Please use a compatible browser like Google Chrome.");
+      return;
+    }
+
+    if (isListening) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      setIsListening(false);
+    } else {
+      playSfx(550, 750, 0.1);
+      let baseText = '';
+      setInputText(prev => {
+        baseText = prev;
+        return prev;
+      });
+
+      const rec = new SpeechRecognition();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = 'en-US';
+
+      rec.onstart = () => {
+        setIsListening(true);
+      };
+
+      rec.onresult = (event: any) => {
+        let finalTranscript = '';
+        let interimTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript;
+          } else {
+            interimTranscript += event.results[i][0].transcript;
+          }
+        }
+        
+        const currentSpeech = finalTranscript || interimTranscript;
+        if (currentSpeech) {
+          const prefix = baseText.trim() ? `${baseText.trim()} ` : '';
+          setInputText(prefix + currentSpeech.trim());
+        }
+      };
+
+      rec.onerror = (event: any) => {
+        console.error("Speech recognition error:", event.error);
+        setIsListening(false);
+      };
+
+      rec.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = rec;
+      rec.start();
+    }
+  };
+
+  // Cleanup speech recognition on unmount
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    };
+  }, []);
 
   // Load chats on initial mount
   useEffect(() => {
@@ -147,6 +226,16 @@ export default function ChatView({ setActiveTab }: ChatViewProps) {
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!inputText.trim() || isGenerating) return;
+
+    // Stop speech recognition if listening
+    if (isListening && recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (err) {
+        console.warn(err);
+      }
+      setIsListening(false);
+    }
 
     playSfx(750, 1050, 0.08);
     const userMsgText = inputText;
@@ -674,6 +763,20 @@ export default function ChatView({ setActiveTab }: ChatViewProps) {
                 placeholder="Ask Z. AI anything..."
                 className="w-full bg-transparent border-none text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-0 text-xs px-3.5 py-1.5 outline-none resize-none max-h-[140px] font-mono leading-relaxed min-h-[18px]"
               />
+
+              {/* Voice Input Button */}
+              <button
+                type="button"
+                onClick={toggleSpeech}
+                title={isListening ? "Stop Voice Input" : "Speak your query"}
+                className={`p-2 rounded-lg transition-all flex items-center justify-center shrink-0 hover:bg-zinc-800 mr-1 ${
+                  isListening 
+                    ? 'text-red-500 bg-red-500/10 animate-pulse' 
+                    : 'text-zinc-500 hover:text-zinc-300'
+                }`}
+              >
+                {isListening ? <Mic size={14} className="text-red-500 animate-pulse" /> : <MicOff size={14} />}
+              </button>
 
               {/* Languages icon flag accent */}
               <div className="p-2 text-zinc-600 hover:text-zinc-400 select-none hidden xs:block cursor-help" title="Supports both English and Hindi communication">

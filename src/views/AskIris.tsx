@@ -10,6 +10,7 @@ import {
 } from 'react-icons/ri'
 import { Typewriter } from '../components/Typewriter'
 import Sphere from '../components/Sphere'
+import { MessageLog } from '../components/MessageLog'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
@@ -19,6 +20,7 @@ interface AskIrisProps {
   onAskIris?: (text: string) => void
   isSystemActive: boolean
   chatHistory?: any[]
+  onClearHistory?: () => void
 }
 
 const VoiceWaveform: React.FC = () => {
@@ -56,11 +58,68 @@ const VoiceWaveform: React.FC = () => {
   );
 };
 
-export const AskIrisView: React.FC<AskIrisProps> = ({ onAskIris, isSystemActive, chatHistory = [] }) => {
+const IrisSpeakingIndicator: React.FC<{ active: boolean }> = ({ active }) => {
+  if (!active) return null;
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, height: 0, y: -10 }}
+      animate={{ opacity: 1, height: 'auto', y: 0 }}
+      exit={{ opacity: 0, height: 0, y: -10 }}
+      transition={{ duration: 0.3, ease: 'easeInOut' }}
+      className="flex items-center justify-between py-2.5 px-4 bg-[#00ffb3]/10 border border-[#00ffb3]/20 rounded-xl my-3 overflow-hidden"
+    >
+      <div className="flex items-center gap-2">
+        <span className="w-2.5 h-2.5 rounded-full bg-[#00ffb3] animate-ping" />
+        <span className="text-[10px] uppercase font-bold tracking-widest text-[#00ffb3] font-mono">
+          IRIS IS SPEAKING_
+        </span>
+      </div>
+      <div className="flex items-end gap-[3.5px] h-5 pr-1">
+        {[18, 8, 24, 12, 28, 16, 22, 10, 18, 8].map((maxH, i) => (
+          <motion.div
+            key={i}
+            className={`w-[3px] rounded-full ${i % 2 === 0 ? 'bg-[#00ffb3]' : 'bg-[#00ff9d]'}`}
+            animate={{
+              height: [4, maxH, 4]
+            }}
+            transition={{
+              duration: 0.4 + (i * 0.07) % 0.35,
+              repeat: Infinity,
+              ease: "easeInOut",
+            }}
+          />
+        ))}
+      </div>
+    </motion.div>
+  );
+};
+
+export const AskIrisView: React.FC<AskIrisProps> = ({ onAskIris, isSystemActive, chatHistory = [], onClearHistory }) => {
   const [questionText, setQuestionText] = useState('')
   const [isSending, setIsSending] = useState(false)
   const [isListeningSpeech, setIsListeningSpeech] = useState(false)
   const [isPttActive, setIsPttActive] = useState(false)
+  const [isIrisSpeaking, setIsIrisSpeaking] = useState(false)
+
+  useEffect(() => {
+    let serviceInstance: any = null;
+    import('../services/Iris-voice-ai').then(({ irisService }) => {
+      serviceInstance = irisService;
+      setIsIrisSpeaking(irisService.isSpeaking);
+      irisService.onSpeakingChange = (speaking: boolean) => {
+        setIsIrisSpeaking(speaking);
+      };
+    }).catch(err => {
+      console.error("Failed to dynamically load irisService in AskIrisView", err);
+    });
+
+    return () => {
+      if (serviceInstance) {
+        serviceInstance.onSpeakingChange = undefined;
+      }
+    };
+  }, []);
   
   // Settings toggle & interaction mode preferences
   const [showSettings, setShowSettings] = useState(false)
@@ -403,6 +462,14 @@ export const AskIrisView: React.FC<AskIrisProps> = ({ onAskIris, isSystemActive,
       setIsListeningSpeech(false)
     } else {
       playAction()
+      
+      // Capture the current questionText before speech recognition starts
+      let baseText = ''
+      setQuestionText(prev => {
+        baseText = prev;
+        return prev;
+      });
+
       let recognition: any
       try {
         recognition = new SpeechRecognition()
@@ -421,16 +488,19 @@ export const AskIrisView: React.FC<AskIrisProps> = ({ onAskIris, isSystemActive,
 
       recognition.onresult = (event: any) => {
         let finalTranscript = ''
+        let interimTranscript = ''
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
             finalTranscript += event.results[i][0].transcript
+          } else {
+            interimTranscript += event.results[i][0].transcript
           }
         }
-        if (finalTranscript) {
-          setQuestionText(prev => {
-            const trimmed = prev.trim()
-            return trimmed ? `${trimmed} ${finalTranscript.trim()}` : finalTranscript.trim()
-          })
+        
+        const currentSpeech = finalTranscript || interimTranscript;
+        if (currentSpeech) {
+          const prefix = baseText.trim() ? `${baseText.trim()} ` : '';
+          setQuestionText(prefix + currentSpeech.trim());
         }
       }
 
@@ -520,27 +590,6 @@ export const AskIrisView: React.FC<AskIrisProps> = ({ onAskIris, isSystemActive,
           ''
         }`}
       >
-        {/* Futuristic Dynamic Top Status Wave/Pulse Line */}
-        <div className="absolute top-0 left-0 right-0 h-1 overflow-hidden">
-          {currentState === 'Processing' && (
-            <motion.div 
-              initial={{ x: '-100%' }}
-              animate={{ x: '100%' }}
-              transition={{ repeat: Infinity, duration: 1.4, ease: 'linear' }}
-              className="w-2/5 h-full bg-gradient-to-r from-transparent via-purple-500 to-transparent shadow-[0_0_10px_rgba(168,85,247,0.8)]"
-            />
-          )}
-          {currentState === 'Listening' && (
-            <motion.div 
-              animate={{ opacity: [0.3, 1, 0.3] }}
-              transition={{ repeat: Infinity, duration: 1.2, ease: 'easeInOut' }}
-              className="w-full h-full bg-gradient-to-r from-red-600 via-rose-500 to-red-600 shadow-[0_0_10px_rgba(239,68,68,0.8)]"
-            />
-          )}
-          {currentState === 'Idle' && (
-            <div className="w-full h-full bg-[#00ffb3]/10" />
-          )}
-        </div>
         <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-4">
           <div className="flex items-center gap-3">
             <h1 className="text-3xl font-bold tracking-tight text-white">
@@ -748,88 +797,13 @@ export const AskIrisView: React.FC<AskIrisProps> = ({ onAskIris, isSystemActive,
         </p>
 
         {/* Dynamic scrollable message/interaction bubbles stack */}
-        {chatHistory.length > 0 && (
-          <div className="mt-4 mb-2 max-h-[350px] overflow-y-auto px-2 py-2 flex flex-col gap-4 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent border border-white/5 bg-black/40 rounded-xl">
-            <AnimatePresence initial={false}>
-              {chatHistory.map((msg, index) => (
-               <motion.div
-                 key={index}
-                 initial={{ opacity: 0, scale: 0.98, y: 8 }}
-                 animate={{ opacity: 1, scale: 1, y: 0 }}
-                 transition={{ duration: 0.2 }}
-                 className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} w-full`}
-               >
-                 <span className={`text-[9px] font-mono tracking-widest uppercase mb-1 ${
-                   msg.role === 'user' ? 'text-[#00ffb3]/70' : 'text-zinc-500'
-                 }`}>
-                   {msg.role === 'user' ? 'User Input' : 'IRIS Response'}
-                 </span>
-                 <div
-                   className={`px-4 py-3 border rounded-2xl text-[12.5px] leading-relaxed break-words whitespace-pre-wrap w-full max-w-full ${
-                     msg.role === 'user'
-                       ? 'bg-zinc-900/90 border-[#00ffb3]/30 text-white rounded-tr-none ml-auto max-w-[85%]'
-                       : 'bg-zinc-950/90 border-white/5 text-zinc-300 rounded-tl-none markdown-body prose prose-invert prose-sm'
-                   }`}
-                 >
-                   {msg.role === 'user' ? (
-                     msg.content
-                   ) : (
-                     <Markdown
-                       remarkPlugins={[remarkGfm]}
-                       components={{
-                         code({ node, inline, className, children, ...props }: any) {
-                           const match = /language-(\w+)/.exec(className || '');
-                           return !inline && match ? (
-                             <div className="relative group overflow-hidden rounded-xl border border-white/10 my-4 bg-black">
-                               <div className="flex items-center justify-between px-4 py-2 bg-zinc-900 border-b border-white/10">
-                                 <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest">{match[1]}</span>
-                               </div>
-                               <SyntaxHighlighter
-                                 {...props}
-                                 children={String(children).replace(/\n$/, '')}
-                                 style={vscDarkPlus as any}
-                                 language={match[1]}
-                                 PreTag="div"
-                                 customStyle={{ margin: 0, padding: '1rem', fontSize: '11px', background: 'transparent' }}
-                               />
-                             </div>
-                           ) : (
-                             <code {...props} className={`${className} bg-zinc-800 px-1.5 py-0.5 rounded text-emerald-400 font-mono text-[11px]`}>
-                               {children}
-                             </code>
-                           );
-                         }
-                       }}
-                     >
-                       {msg.content}
-                     </Markdown>
-                   )}
-                 </div>
-               </motion.div>
-             ))}
-             {isSending && (
-               <motion.div
-                 initial={{ opacity: 0, scale: 0.98, y: 8 }}
-                 animate={{ opacity: 1, scale: 1, y: 0 }}
-                 className="flex flex-col items-start w-full"
-               >
-                 <span className="text-[9px] font-mono tracking-widest uppercase mb-1 text-purple-400 animate-pulse">
-                   IRIS GENERATING_
-                 </span>
-                 <div className="w-full h-1 bg-zinc-950 rounded-full overflow-hidden mb-3 relative border border-white/5 mt-1.5 max-w-[85%]">
-                   <motion.div
-                     initial={{ left: "-100%" }}
-                     animate={{ left: "100%" }}
-                     transition={{ ease: "linear", duration: 1.5, repeat: Infinity }}
-                     className="absolute top-0 bottom-0 w-1/3 bg-gradient-to-r from-transparent via-[#00ffb3] to-transparent"
-                   />
-                 </div>
-               </motion.div>
-             )}
-             </AnimatePresence>
-            <div ref={chatEndRef} />
-           </div>
-        )}
+        <MessageLog 
+          chatHistory={chatHistory} 
+          isGenerating={isSending} 
+          onClearHistory={onClearHistory} 
+          onReaskQuestion={(text) => setQuestionText(text)} 
+          maxHeight="320px"
+        />
 
         <AnimatePresence>
            {(isListeningSpeech || isPttActive || isHandsFree) && (
@@ -838,6 +812,12 @@ export const AskIrisView: React.FC<AskIrisProps> = ({ onAskIris, isSystemActive,
          </AnimatePresence>
 
         {/* VOICE COMMAND & HANDS-FREE ENGINE HUB */}
+        <AnimatePresence>
+          {isIrisSpeaking && (
+            <IrisSpeakingIndicator active={isIrisSpeaking} />
+          )}
+        </AnimatePresence>
+
         {interactionMode === 'continuous' && (
           <div className="mt-4 p-4 rounded-xl border border-white/5 bg-zinc-950/40 backdrop-blur-sm flex flex-col gap-3">
             <div className="flex items-center justify-between">

@@ -4,7 +4,7 @@ const ws = new WebSocket(url);
 ws.on('open', () => {
   ws.send(JSON.stringify({
     setup: {
-      model: "models/gemini-2.0-flash-exp",
+      model: "models/gemini-2.5-flash-native-audio-latest",
       generationConfig: { responseModalities: ["AUDIO"] }
     }
   }));

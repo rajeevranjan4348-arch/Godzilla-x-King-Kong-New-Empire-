@@ -18,7 +18,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 async function startServer() {
   const app = express();
   const server = http.createServer(app);
-  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  const PORT = 3000;
 
   app.use(express.json({ limit: '50mb' }));
 
@@ -49,7 +49,7 @@ Strict Rule: Kabhi bhi ye mat kaho ki 'Main ek AI hoon aur dekh nahi sakta'. Tum
       let textContent = prompt || "Look at the current camera feed. Be conversational and react based on your system instructions.";
 
       const response = await ai.models.generateContent({
-        model: 'gemini-1.5-pro',
+        model: 'gemini-3.5-flash',
         contents: [
           {
             role: 'user',
@@ -400,7 +400,8 @@ Tumhare Guidelines:
   });
 
   // Vite middleware for development
-  if (process.env.NODE_ENV !== 'production') {
+  const isProduction = process.env.NODE_ENV === 'production' || (typeof __filename !== 'undefined' && (__filename.includes('dist') || __filename.endsWith('.cjs') || __filename.endsWith('.js')));
+  if (!isProduction) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },

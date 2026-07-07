@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { RiTerminalBoxLine, RiBookOpenLine, RiUploadCloudLine, RiSettings4Line, RiDownloadCloudLine, RiMicLine, RiSendPlaneFill } from 'react-icons/ri';
+import { RiTerminalBoxLine, RiBookOpenLine, RiUploadCloudLine, RiSettings4Line, RiDownloadCloudLine, RiMicLine, RiSendPlaneFill, RiMicOffLine } from 'react-icons/ri';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -9,9 +9,88 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 const AgentView = () => {
   const [inputText, setInputText] = useState('');
   const [chatHistory, setChatHistory] = useState<any[]>([]);
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
+  const toggleSpeech = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Speech recognition is not supported in this browser.");
+      return;
+    }
+
+    if (isListening) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      setIsListening(false);
+    } else {
+      let baseText = '';
+      setInputText(prev => {
+        baseText = prev;
+        return prev;
+      });
+
+      const rec = new SpeechRecognition();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = 'en-US';
+
+      rec.onstart = () => {
+        setIsListening(true);
+      };
+
+      rec.onresult = (event: any) => {
+        let finalTranscript = '';
+        let interimTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript;
+          } else {
+            interimTranscript += event.results[i][0].transcript;
+          }
+        }
+        const currentSpeech = finalTranscript || interimTranscript;
+        if (currentSpeech) {
+          const prefix = baseText.trim() ? `${baseText.trim()} ` : '';
+          setInputText(prefix + currentSpeech.trim());
+        }
+      };
+
+      rec.onerror = (event: any) => {
+        console.error("Agent Speech error:", event.error);
+        setIsListening(false);
+      };
+
+      rec.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = rec;
+      rec.start();
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch (err) {}
+      }
+    };
+  }, []);
 
   const handleSend = async () => {
       if (!inputText.trim()) return;
+
+      if (isListening && recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (err) {}
+        setIsListening(false);
+      }
+
       const newHistory = [...chatHistory, { role: 'user', content: inputText }];
       setChatHistory(newHistory);
       const currentInput = inputText;
@@ -28,7 +107,7 @@ const AgentView = () => {
           }));
           
           const res = await ai.models.generateContent({
-              model: 'gemini-2.5-flash',
+              model: 'gemini-3.5-flash',
               contents,
               config: {
                   systemInstruction: "You are NanoClaw Agent, a highly capable AI assistant running in an explicit container. Provide concise, helpful responses to console commands. If the user asks for realtime facts, use Google Search.",
@@ -184,23 +263,16 @@ const AgentView = () => {
                     />
                     <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
                         <button
-                            onClick={() => {
-                                const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-                                if (SpeechRecognition) {
-                                    const recognition = new SpeechRecognition();
-                                    recognition.onresult = (event: any) => {
-                                        const transcript = event.results[0][0].transcript;
-                                        setInputText(prev => prev + ' ' + transcript);
-                                    };
-                                    recognition.start();
-                                } else {
-                                    alert("Speech recognition is not supported in this browser.");
-                                }
-                            }}
-                            className="text-zinc-400 hover:text-emerald-400 p-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 rounded-full"
-                            aria-label="Dictate via microphone"
+                            onClick={toggleSpeech}
+                            className={`p-2 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 rounded-full ${
+                                isListening 
+                                    ? 'text-red-500 bg-red-500/10 animate-pulse scale-110' 
+                                    : 'text-zinc-400 hover:text-emerald-400'
+                            }`}
+                            aria-label={isListening ? "Stop voice listening" : "Dictate via microphone"}
+                            title={isListening ? "Stop Listening" : "Speak your query"}
                         >
-                            <RiMicLine size={18} aria-hidden="true" />
+                            <RiMicLine size={18} className={isListening ? 'text-red-500 animate-pulse' : ''} aria-hidden="true" />
                         </button>
                         <button
                             onClick={handleSend}

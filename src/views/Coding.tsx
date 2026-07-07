@@ -44,7 +44,7 @@ export default function CodingView() {
       const systemPrompt = 'You are an expert web developer. Write HTML/CSS/JS code based on the user prompt. ONLY output the raw code, no markdown formatting, no explanations.';
 
       const responseStream = await ai.models.generateContentStream({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.5-flash',
         contents: prompt,
         config: {
           systemInstruction: systemPrompt

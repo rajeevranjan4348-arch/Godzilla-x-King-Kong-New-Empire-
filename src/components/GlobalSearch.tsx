@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { RiSearchLine, RiCloseLine, RiStickyNoteLine, RiTaskLine, RiApps2Line, RiTerminalBoxLine } from 'react-icons/ri';
+import { RiSearchLine, RiCloseLine, RiStickyNoteLine, RiTaskLine, RiApps2Line, RiTerminalBoxLine, RiMicLine, RiMicOffLine } from 'react-icons/ri';
 import { APPS } from '../views/Apps';
 
 interface SearchResult {
@@ -20,6 +20,92 @@ export function GlobalSearch({ onNavigate }: { onNavigate: (tab: string) => void
   const [isSearching, setIsSearching] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
+  const toggleSpeech = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Speech Recognition is not supported in this browser. Please use Google Chrome or a compatible browser.");
+      return;
+    }
+
+    if (isListening) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      setIsListening(false);
+    } else {
+      let baseQuery = '';
+      setQuery(prev => {
+        baseQuery = prev;
+        return prev;
+      });
+
+      const rec = new SpeechRecognition();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = 'en-US';
+
+      rec.onstart = () => {
+        setIsListening(true);
+      };
+
+      rec.onresult = (event: any) => {
+        let finalTranscript = '';
+        let interimTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript;
+          } else {
+            interimTranscript += event.results[i][0].transcript;
+          }
+        }
+        
+        const currentSpeech = finalTranscript || interimTranscript;
+        if (currentSpeech) {
+          const prefix = baseQuery.trim() ? `${baseQuery.trim()} ` : '';
+          setQuery(prefix + currentSpeech.trim());
+        }
+      };
+
+      rec.onerror = (event: any) => {
+        console.error("Speech recognition error:", event.error);
+        setIsListening(false);
+      };
+
+      rec.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = rec;
+      rec.start();
+    }
+  };
+
+  useEffect(() => {
+    if (!isOpen && isListening && recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch (err) {
+        console.error(err);
+      }
+      setIsListening(false);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -244,21 +330,33 @@ export function GlobalSearch({ onNavigate }: { onNavigate: (tab: string) => void
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsOpen(false)} />
           <div className="relative w-[90%] max-w-2xl bg-zinc-900 border border-zinc-700/50 rounded-xl shadow-2xl flex flex-col z-[201] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="flex items-center px-4 py-4 border-b border-white/10 bg-black/20">
-              <RiSearchLine size={20} className="text-emerald-500 mr-3" />
-              <input
-                ref={inputRef}
-                type="text"
-                placeholder="Search apps, notes, tasks..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                className="flex-1 bg-transparent text-white text-lg outline-none placeholder:text-zinc-600"
-              />
-              {query && (
-                <button onClick={() => setQuery('')} className="text-zinc-500 hover:text-white transition-colors">
-                  <RiCloseLine size={20} />
+                <RiSearchLine size={20} className="text-emerald-500 mr-3" />
+                <input
+                  ref={inputRef}
+                  type="text"
+                  placeholder={isListening ? "Listening..." : "Search apps, notes, tasks..."}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  className="flex-1 bg-transparent text-white text-lg outline-none placeholder:text-zinc-600"
+                />
+                <button
+                  type="button"
+                  onClick={toggleSpeech}
+                  title={isListening ? "Stop Voice Input" : "Search using Voice"}
+                  className={`p-2 rounded-lg transition-all flex items-center justify-center shrink-0 hover:bg-zinc-800 mr-2 ${
+                    isListening 
+                      ? 'text-red-500 bg-red-500/10 animate-pulse' 
+                      : 'text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  {isListening ? <RiMicLine size={20} className="text-red-500" /> : <RiMicOffLine size={20} />}
                 </button>
-              )}
-            </div>
+                {query && (
+                  <button onClick={() => setQuery('')} className="text-zinc-500 hover:text-white transition-colors">
+                    <RiCloseLine size={20} />
+                  </button>
+                )}
+              </div>
 
             {/* Sorting controls */}
             {query.trim() && sortedResults.length > 0 && (

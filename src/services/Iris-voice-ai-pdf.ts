@@ -7,9 +7,12 @@ export class GeminiLiveService {
   public analyser: AnalyserNode | null = null
   public apiKey: string
   public isConnected: boolean = false
+  public isSpeaking: boolean = false
+  public onSpeakingChange?: (isSpeaking: boolean) => void
+  private activeSources: Set<AudioBufferSourceNode> = new Set()
   private isMicMuted: boolean = false
   private nextStartTime: number = 0
-  public model: string = 'models/gemini-3.1-flash-live-preview';
+  public model: string = 'models/gemini-2.5-flash-native-audio-latest';
   private aiResponseBuffer: string = ''
   private userInputBuffer: string = ''
   private appWatcherInterval: NodeJS.Timeout | null = null
@@ -57,7 +60,8 @@ export class GeminiLiveService {
     await this.audioContext.audioWorklet.addModule(workletUrl)
     
     // 5. Open WebSocket
-    const url = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${this.apiKey}`
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const url = `${protocol}//${window.location.host}/api/gemini-live?key=${this.apiKey}`
     this.socket = new WebSocket(url)
     this.socket.onopen = async () => {
       this.isConnected = true
@@ -139,7 +143,16 @@ export class GeminiLiveService {
       const downsampled = (window as any).downsampleTo16000?.(event.data, inputSampleRate) || event.data
       const pcmData = (window as any).floatTo16BitPCM?.(downsampled) || new Int16Array(downsampled)
       const base64Audio = btoa(String.fromCharCode(...new Uint8Array(pcmData.buffer)))
-      this.socket.send(JSON.stringify({ realtimeInput: { mediaChunks: [{ mimeType: 'audio/pcm;rate=16000', data: base64Audio }] } }))
+      this.socket.send(JSON.stringify({
+        realtimeInput: {
+          chunks: [{
+            inlineData: {
+              mimeType: 'audio/pcm;rate=16000',
+              data: base64Audio
+            }
+          }]
+        }
+      }))
     }
     source.connect(this.workletNode)
     this.workletNode.connect(this.audioContext.destination)
@@ -156,6 +169,23 @@ export class GeminiLiveService {
     this.analyser.connect(this.audioContext.destination)
     const now = this.audioContext.currentTime
     if (this.nextStartTime < now) this.nextStartTime = now + 0.05
+    
+    this.activeSources.add(source)
+    if (!this.isSpeaking) {
+      this.isSpeaking = true
+      if (this.onSpeakingChange) this.onSpeakingChange(true)
+    }
+    
+    source.onended = () => {
+      this.activeSources.delete(source)
+      if (this.activeSources.size === 0) {
+        if (this.isSpeaking) {
+          this.isSpeaking = false
+          if (this.onSpeakingChange) this.onSpeakingChange(false)
+        }
+      }
+    }
+    
     source.start(this.nextStartTime)
     this.nextStartTime += buffer.duration // chain chunks with no gap
   }
@@ -187,6 +217,16 @@ export class GeminiLiveService {
     this.isConnected = false
     this.socket?.close()
     this.socket = null
+    
+    this.activeSources.forEach(src => {
+      try { src.stop() } catch {}
+    })
+    this.activeSources.clear()
+    if (this.isSpeaking) {
+      this.isSpeaking = false
+      if (this.onSpeakingChange) this.onSpeakingChange(false)
+    }
+
     this.mediaStream?.getTracks().forEach(t => t.stop())
     this.mediaStream = null
     this.workletNode?.disconnect()

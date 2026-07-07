@@ -1,5 +1,6 @@
 import { useEffect, useCallback, useRef, useState } from 'react'
 import Sphere from '../components/Sphere'
+import { MessageLog } from '../components/MessageLog'
 import { motion, AnimatePresence } from 'motion/react'
 import {
   RiCpuLine,
@@ -110,6 +111,42 @@ const VoiceWaveform: React.FC<{ active: boolean }> = ({ active }) => {
   );
 };
 
+const IrisSpeakingIndicator: React.FC<{ active: boolean }> = ({ active }) => {
+  if (!active) return null;
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -10 }}
+      className="flex items-center justify-between py-2.5 px-4 bg-[#00ffb3]/10 border border-[#00ffb3]/20 rounded-xl my-3"
+    >
+      <div className="flex items-center gap-2">
+        <span className="w-2.5 h-2.5 rounded-full bg-[#00ffb3] animate-ping" />
+        <span className="text-[10px] uppercase font-bold tracking-widest text-[#00ffb3] font-mono">
+          IRIS IS SPEAKING_
+        </span>
+      </div>
+      <div className="flex items-end gap-[3.5px] h-5 pr-1">
+        {[18, 8, 24, 12, 28, 16, 22, 10, 18, 8].map((maxH, i) => (
+          <motion.div
+            key={i}
+            className={`w-[3px] rounded-full ${i % 2 === 0 ? 'bg-[#00ffb3]' : 'bg-[#00ff9d]'}`}
+            animate={{
+              height: [4, maxH, 4]
+            }}
+            transition={{
+              duration: 0.4 + (i * 0.07) % 0.35,
+              repeat: Infinity,
+              ease: "easeInOut",
+            }}
+          />
+        ))}
+      </div>
+    </motion.div>
+  );
+};
+
 export default function DashboardView({
   props,
   stats,
@@ -138,8 +175,57 @@ export default function DashboardView({
   const [isPopupOpen, setIsPopupOpen] = useState(false)
   const [questionText, setQuestionText] = useState('')
   const [isListeningSpeech, setIsListeningSpeech] = useState(false)
+  const [isIrisSpeaking, setIsIrisSpeaking] = useState(false)
   const recognitionRef = useRef<any>(null)
   const chatEndRef = useRef<HTMLDivElement>(null)
+
+  const [isHandsFree, setIsHandsFree] = useState(false)
+  const handsFreeRecRef = useRef<any>(null)
+  const silenceTimeoutRef = useRef<any>(null)
+  const speechTranscriptRef = useRef<string>('')
+  const isHandsFreeRef = useRef<boolean>(false)
+  const isSendingRef = useRef<boolean>(false)
+
+  const [selectedVoice, setSelectedVoice] = useState(() => {
+    return localStorage.getItem('iris_ai_voice') || 'Puck'
+  })
+
+  const handleVoiceSelect = (voice: string) => {
+    playClick()
+    setSelectedVoice(voice)
+    localStorage.setItem('iris_ai_voice', voice)
+    if (isSystemActive) {
+      alert(`Voice updated to ${voice.toUpperCase()}. Please restart the voice link to apply the voice change.`)
+    }
+  }
+
+  // Keep refs up to date for closure safety
+  useEffect(() => {
+    isHandsFreeRef.current = isHandsFree;
+  }, [isHandsFree]);
+
+  useEffect(() => {
+    isSendingRef.current = isGenerating;
+  }, [isGenerating]);
+
+  useEffect(() => {
+    let serviceInstance: any = null;
+    import('../services/Iris-voice-ai').then(({ irisService }) => {
+      serviceInstance = irisService;
+      setIsIrisSpeaking(irisService.isSpeaking);
+      irisService.onSpeakingChange = (speaking: boolean) => {
+        setIsIrisSpeaking(speaking);
+      };
+    }).catch(err => {
+      console.error("Failed to dynamically load irisService in DashboardView", err);
+    });
+
+    return () => {
+      if (serviceInstance) {
+        serviceInstance.onSpeakingChange = undefined;
+      }
+    };
+  }, [isGenerating]);
 
   useEffect(() => {
     if (chatEndRef.current) {
@@ -153,6 +239,8 @@ export default function DashboardView({
         recognitionRef.current.abort()
       }
       setIsListeningSpeech(false)
+      setIsHandsFree(false)
+      stopHandsFreeRecognition()
     }
   }, [isPopupOpen])
 
@@ -161,8 +249,137 @@ export default function DashboardView({
       if (recognitionRef.current) {
         recognitionRef.current.abort()
       }
+      if (handsFreeRecRef.current) {
+        try { handsFreeRecRef.current.abort() } catch (e) {}
+      }
+      if (silenceTimeoutRef.current) {
+        clearTimeout(silenceTimeoutRef.current)
+      }
     }
   }, [])
+
+  const startHandsFreeRecognition = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      alert("Speech recognition is not supported in this browser.")
+      return
+    }
+
+    if (handsFreeRecRef.current) {
+      try {
+        handsFreeRecRef.current.abort()
+      } catch (err) {}
+    }
+
+    let rec: any
+    try {
+      rec = new SpeechRecognition()
+    } catch (err) {
+      console.error(err)
+      return
+    }
+    rec.continuous = true
+    rec.interimResults = true
+    rec.lang = 'en-US'
+
+    rec.onstart = () => {
+      console.log("Dashboard Hands-free recognition active")
+      setIsListeningSpeech(true)
+    }
+
+    rec.onresult = (event: any) => {
+      if (isSendingRef.current) return;
+      if ('speechSynthesis' in window && window.speechSynthesis.speaking) return;
+
+      let finalTranscript = ''
+      let interimTranscript = ''
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript
+        } else {
+          interimTranscript += event.results[i][0].transcript
+        }
+      }
+
+      const merged = (finalTranscript || interimTranscript).trim()
+      if (merged) {
+        setQuestionText(merged)
+        speechTranscriptRef.current = merged
+
+        if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current)
+        silenceTimeoutRef.current = setTimeout(async () => {
+          if (!isSendingRef.current && speechTranscriptRef.current.trim()) {
+            const promptToSend = speechTranscriptRef.current.trim();
+            setQuestionText('');
+            playAction();
+            if (onAskIris) {
+              onAskIris(promptToSend);
+            } else {
+              const { irisService } = await import('../services/Iris-voice-ai');
+              irisService.sendText(promptToSend);
+            }
+          }
+        }, 1300)
+      }
+    }
+
+    rec.onerror = (event: any) => {
+      console.error("Dashboard Hands-free Web Speech error:", event.error)
+    }
+
+    rec.onend = () => {
+      setIsListeningSpeech(false)
+      if (isHandsFreeRef.current && !isSendingRef.current) {
+        setTimeout(() => {
+          if (isHandsFreeRef.current && !isSendingRef.current) {
+            try {
+              rec.start()
+            } catch (err) {}
+          }
+        }, 400)
+      }
+    }
+
+    handsFreeRecRef.current = rec
+    try {
+      rec.start()
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  const stopHandsFreeRecognition = () => {
+    if (silenceTimeoutRef.current) {
+      clearTimeout(silenceTimeoutRef.current)
+    }
+    if (handsFreeRecRef.current) {
+      try {
+        handsFreeRecRef.current.abort()
+      } catch (e) {}
+      handsFreeRecRef.current = null
+    }
+    setIsListeningSpeech(false)
+  }
+
+  const toggleHandsFree = () => {
+    playAction()
+    const newVal = !isHandsFree
+    setIsHandsFree(newVal)
+    if (newVal) {
+      setIsPopupOpen(true)
+      if (isListeningSpeech) {
+        if (recognitionRef.current) {
+          try { recognitionRef.current.abort() } catch (err) {}
+        }
+        setIsListeningSpeech(false)
+      }
+      setTimeout(() => {
+        startHandsFreeRecognition()
+      }, 100)
+    } else {
+      stopHandsFreeRecognition()
+    }
+  }
 
   const toggleSpeechRecognition = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
@@ -178,6 +395,14 @@ export default function DashboardView({
       setIsListeningSpeech(false)
     } else {
       playAction()
+      
+      // Capture the current questionText before speech recognition starts
+      let baseText = ''
+      setQuestionText(prev => {
+        baseText = prev;
+        return prev;
+      });
+
       const recognition = new SpeechRecognition()
       recognition.continuous = true
       recognition.interimResults = true
@@ -189,16 +414,19 @@ export default function DashboardView({
 
       recognition.onresult = (event: any) => {
         let finalTranscript = ''
+        let interimTranscript = ''
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
             finalTranscript += event.results[i][0].transcript
+          } else {
+            interimTranscript += event.results[i][0].transcript
           }
         }
-        if (finalTranscript) {
-          setQuestionText(prev => {
-            const trimmed = prev.trim()
-            return trimmed ? `${trimmed} ${finalTranscript.trim()}` : finalTranscript.trim()
-          })
+        
+        const currentSpeech = finalTranscript || interimTranscript;
+        if (currentSpeech) {
+          const prefix = baseText.trim() ? `${baseText.trim()} ` : '';
+          setQuestionText(prefix + currentSpeech.trim());
         }
       }
 
@@ -556,6 +784,161 @@ export default function DashboardView({
         </div>
       )}
 
+      {/* Voice Chat Control Center */}
+      {!isVideoOn && (
+        <div className="absolute top-4 left-4 z-50 flex flex-col gap-3 w-64 pointer-events-auto hidden md:flex animate-in fade-in slide-in-from-left duration-500">
+          <div className="p-4 rounded-xl border backdrop-blur-md card-hover bg-zinc-900/40 border-white/10 shadow-lg">
+            <div className="text-[10px] font-bold tracking-widest text-zinc-500 mb-2 border-b border-white/10 pb-1 flex justify-between items-center">
+              <span>IRIS VOICE HUB</span>
+              <span className={`px-1.5 py-0.5 rounded-md text-[8px] font-mono font-bold tracking-wider ${
+                isSystemActive 
+                  ? isIrisSpeaking 
+                    ? 'bg-[#00ffb3]/20 text-[#00ffb3] border border-[#00ffb3]/30 animate-pulse' 
+                    : isMicMuted 
+                      ? 'bg-red-500/20 text-red-400 border border-red-500/30' 
+                      : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
+                  : 'bg-zinc-800 text-zinc-500'
+              }`}>
+                {isSystemActive 
+                  ? isIrisSpeaking 
+                    ? 'SPEAKING' 
+                    : isMicMuted 
+                      ? 'MUTED' 
+                      : 'LISTENING' 
+                  : 'OFFLINE'}
+              </span>
+            </div>
+
+            {/* Voice Waveform Visualizer */}
+            {isSystemActive && (
+              <div className="flex items-center justify-between py-1.5 px-2 bg-emerald-500/5 border border-emerald-500/10 rounded-lg mb-2">
+                <div className="flex items-center gap-1.5">
+                  <span className={`w-1.5 h-1.5 rounded-full ${isMicMuted ? 'bg-red-500' : isIrisSpeaking ? 'bg-[#00ffb3] animate-ping' : 'bg-emerald-500 animate-pulse'}`} />
+                  <span className="text-[8px] font-bold tracking-wider text-zinc-400 font-mono">
+                    {isMicMuted ? 'MIC MUTED' : isIrisSpeaking ? 'TALKING' : 'MIC ACTIVE'}
+                  </span>
+                </div>
+                <div className="flex items-end gap-[2px] h-3">
+                  {[6, 12, 18, 10, 14, 8, 12, 6].map((maxH, i) => (
+                    <motion.div
+                      key={i}
+                      className={`w-[2px] rounded-full ${isMicMuted ? 'bg-red-500/40' : isIrisSpeaking ? 'bg-[#00ffb3]' : 'bg-emerald-500'}`}
+                      animate={{
+                        height: isMicMuted ? 2 : isIrisSpeaking ? [2, maxH, 2] : [2, maxH * 0.4, 2]
+                      }}
+                      transition={{
+                        duration: 0.3 + (i * 0.05) % 0.3,
+                        repeat: Infinity,
+                        ease: "easeInOut",
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="flex flex-col gap-2 mt-2">
+              <button
+                onClick={async () => {
+                  playClick();
+                  if (props.handleMicTrigger) {
+                    await props.handleMicTrigger();
+                  } else {
+                    await toggleSystem();
+                  }
+                }}
+                className={`w-full py-2 px-3 rounded-lg text-xs font-bold font-mono transition-all duration-300 flex items-center justify-center gap-2 border ${
+                  isSystemActive 
+                    ? 'bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20' 
+                    : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
+                }`}
+              >
+                <RiMicLine size={14} className={isSystemActive && !isMicMuted ? "animate-pulse" : ""} />
+                {isSystemActive ? 'DISCONNECT VOICE' : 'INITIALIZE VOICE LINK'}
+              </button>
+
+              {isSystemActive && (
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={toggleMic}
+                    className={`py-1.5 px-2 rounded-lg border text-[10px] font-mono font-bold flex items-center justify-center gap-1.5 transition-all ${
+                      isMicMuted 
+                        ? 'bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20' 
+                        : 'bg-zinc-800/80 border-white/10 text-zinc-300 hover:bg-white/5'
+                    }`}
+                  >
+                    {isMicMuted ? <RiMicOffLine size={12} /> : <RiMicLine size={12} />}
+                    {isMicMuted ? 'UNMUTE MIC' : 'MUTE MIC'}
+                  </button>
+
+                  <button
+                    onClick={toggleHandsFree}
+                    className={`py-1.5 px-2 rounded-lg border text-[10px] font-mono font-bold flex items-center justify-center gap-1.5 transition-all ${
+                      isHandsFree 
+                        ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20' 
+                        : 'bg-zinc-800/80 border-white/10 text-zinc-300 hover:bg-white/5'
+                    }`}
+                  >
+                    <RiPulseLine size={12} />
+                    {isHandsFree ? 'HANDSFREE' : 'HANDSFREE'}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Voice Profile Selector */}
+            <div className="mt-3 pt-2 border-t border-white/5 flex flex-col gap-1.5">
+              <label className="text-[9px] font-mono tracking-wider text-zinc-500 font-bold uppercase">
+                AI VOICE PROFILE
+              </label>
+              <div className="grid grid-cols-5 gap-1">
+                {(['Aoede', 'Charon', 'Fenrir', 'Kore', 'Puck']).map((voice) => (
+                  <button
+                    key={voice}
+                    onClick={() => handleVoiceSelect(voice)}
+                    title={`Switch voice to ${voice}`}
+                    className={`text-[8px] font-mono font-bold py-1.5 rounded transition-all ${
+                      selectedVoice === voice
+                        ? 'bg-white text-black font-extrabold shadow-[0_0_8px_rgba(255,255,255,0.25)]'
+                        : 'bg-black/40 border border-white/5 text-zinc-500 hover:text-zinc-300 hover:border-white/10'
+                    }`}
+                  >
+                    {voice.substring(0, 3).toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Quick Voice Commands suggestions */}
+            <div className="mt-3 pt-2 border-t border-white/5">
+              <span className="text-[9px] font-mono tracking-wider text-zinc-500 font-bold uppercase block mb-1">
+                SUGGESTED COMMANDS
+              </span>
+              <div className="flex flex-col gap-1">
+                {[
+                  "Draft a professional email...",
+                  "Analyze my screen share...",
+                  "Clear context history...",
+                  "Get weather in Tokyo..."
+                ].map((cmd, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => {
+                      playClick();
+                      setQuestionText(cmd);
+                    }}
+                    className="text-[9px] text-left text-zinc-400 hover:text-[#00ffb3] transition-colors font-mono truncate bg-black/20 hover:bg-black/40 px-1.5 py-1 rounded"
+                  >
+                    &gt; {cmd}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="order-1 lg:order-none col-span-12 lg:col-span-6 relative flex-1 flex flex-col items-center justify-center min-h-[50vh] lg:min-h-0">
         
         {/* Quality Settings & Analyze Button */}
@@ -896,20 +1279,17 @@ export default function DashboardView({
               </button>
             </div>
 
-            {/* Screen Share Icon */}
+            {/* Voice Mode / Microphone Icon */}
             <div className="flex flex-col items-center gap-2">
               <button
-                onClick={() => {
-                  if (isVideoOn && visionMode === 'screen') stopVision()
-                  else startVision('screen', quality)
-                }}
-                aria-label={isVideoOn && visionMode === 'screen' ? "Stop Screen Share" : "Enable Screen Share"}
-                title={isVideoOn && visionMode === 'screen' ? "Stop Screen Share" : "Enable Screen Share"}
+                onClick={toggleHandsFree}
+                aria-label={isHandsFree ? "Stop Hands-Free Voice Mode" : "Enable Hands-Free Voice Mode"}
+                title={isHandsFree ? "Stop Hands-Free Voice Mode" : "Enable Hands-Free Voice Mode"}
                 className={`relative cursor-pointer p-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 rounded-full hover:bg-white/5 ${
-                  isVideoOn && visionMode === 'screen' ? 'text-emerald-400' : 'text-zinc-400 hover:text-zinc-200'
+                  isHandsFree ? 'text-emerald-400' : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
-                <RiComputerLine size={20} className="sm:w-[24px] sm:h-[24px]" aria-hidden="true" />
+                <RiMicLine size={20} className="sm:w-[24px] sm:h-[24px]" aria-hidden="true" />
               </button>
             </div>
 
@@ -971,7 +1351,11 @@ export default function DashboardView({
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 20 }}
               onClick={(e) => e.stopPropagation()}
-              className="ask-iris-card relative select-none"
+              className={`ask-iris-card relative select-none ${
+                isGenerating ? 'processing' :
+                isListeningSpeech ? 'listening' :
+                ''
+              }`}
             >
               <button
                 onClick={() => setIsPopupOpen(false)}
@@ -988,37 +1372,15 @@ export default function DashboardView({
               </p>
 
               {/* Dynamic scrollable message/interaction bubbles stack */}
-              {chatHistory.length > 0 && (
-                <div className="mt-4 mb-2 max-h-[160px] overflow-y-auto px-1 py-1 flex flex-col gap-3 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent pr-1.5 border border-white/5 bg-black/40 rounded-xl">
-                  {chatHistory.map((msg, index) => (
-                    <motion.div
-                      key={index}
-                      initial={{ opacity: 0, scale: 0.98, y: 8 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      transition={{ duration: 0.2 }}
-                      className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
-                    >
-                      <span className={`text-[9px] font-mono tracking-widest uppercase mb-1 ${
-                        msg.role === 'user' ? 'text-[#00ffb3]/70' : 'text-zinc-500'
-                      }`}>
-                        {msg.role === 'user' ? 'User Input' : 'IRIS Response'}
-                      </span>
-                      <div
-                        className={`px-3.5 py-2.5 rounded-2xl text-[12.5px] leading-relaxed break-words whitespace-pre-wrap ${
-                          msg.role === 'user'
-                            ? 'bg-zinc-900/90 border border-[#00ffb3]/30 text-white rounded-tr-none'
-                            : 'bg-zinc-950/90 border border-white/5 text-zinc-300 rounded-tl-none'
-                        }`}
-                      >
-                        {msg.content}
-                      </div>
-                    </motion.div>
-                  ))}
-                  <div ref={chatEndRef} />
-                </div>
-              )}
+              <MessageLog 
+                chatHistory={chatHistory} 
+                isGenerating={isGenerating} 
+                onReaskQuestion={(text) => setQuestionText(text)} 
+                maxHeight="165px"
+              />
 
               <VoiceWaveform active={isListeningSpeech} />
+              <IrisSpeakingIndicator active={isIrisSpeaking} />
 
               <div className="relative mt-6 flex items-center">
                 <input

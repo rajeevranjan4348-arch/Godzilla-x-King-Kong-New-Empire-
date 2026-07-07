@@ -1,6 +1,7 @@
 import { GoogleGenAI, Modality, Type } from '@google/genai';
 import { IRIS_SYSTEM_PROMPT } from '../prompts/irisSystemPrompt';
 import { GeminiVisionService } from './GeminiVisionService';
+import { base64ToFloat32, floatTo16BitPCM, downsampleTo16000 } from '../utils/audioUtils';
 
 export class GeminiLiveService {
   public audioContext: AudioContext | null = null;
@@ -14,6 +15,10 @@ export class GeminiLiveService {
   
   public onTranscript?: (role: string, text: string) => void;
   public onCommand?: (command: string, args: any) => Promise<any> | any;
+  public onSpeakingChange?: (isSpeaking: boolean) => void;
+  public isSpeaking: boolean = false;
+  private activeSources: Set<AudioBufferSourceNode> = new Set();
+  private nextStartTime: number = 0;
 
   private ai: GoogleGenAI | null = null;
   private session: WebSocket | null = null;
@@ -66,7 +71,8 @@ export class GeminiLiveService {
     const viteKey = (import.meta && import.meta.env) ? import.meta.env.VITE_GEMINI_API_KEY : '';
     const apiKey = localStorage.getItem('iris_custom_api_key') || viteKey || systemApiKey;
     
-    const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/api/gemini-live?key=${apiKey}`;
 
     // Dynamic prompt and settings
     const personality = localStorage.getItem('iris_personality') || "Be helpful, technical, with a 'bro-vibe'. Speak Hindi and English.";
@@ -81,7 +87,7 @@ export class GeminiLiveService {
       this.session.onopen = () => {
         const setupMessage = {
           setup: {
-            model: "models/gemini-3.1-flash-live-preview",
+            model: "models/gemini-2.5-flash-native-audio-latest",
             systemInstruction: {
               parts: [{ text: fullSystemPrompt }]
             },
@@ -93,13 +99,27 @@ export class GeminiLiveService {
                 { name: "clearHistory", description: "Clears the user's chat history, transcript, or memory." },
                 { name: "openDashboard", description: "Opens the main dashboard, home screen, or main menu view." },
                 { name: "openSettings", description: "Opens the settings, configuration, or command center view." },
+                { name: "openApp", description: "Opens a specific application or tab in the system, such as Gmail, YouTube, Calendar, Notes, ChatGPT, Google Maps, Chrome, Google Drive, WhatsApp, etc.", parameters: { type: Type.OBJECT, properties: { appName: { type: Type.STRING, description: "The name of the application to open, e.g. 'Gmail', 'YouTube', 'Notes', 'Calendar', 'ChatGPT'." } }, required: ["appName"] } },
                 { name: "adjustVolume", description: "Adjusts the system volume.", parameters: { type: Type.OBJECT, properties: { level: { type: Type.NUMBER } }, required: ["level"] } },
                 { name: "changeBrightness", description: "Changes the display brightness.", parameters: { type: Type.OBJECT, properties: { level: { type: Type.NUMBER } }, required: ["level"] } },
                 { name: "openUrl", description: "Opens a specific URL or website in the browser.", parameters: { type: Type.OBJECT, properties: { url: { type: Type.STRING } }, required: ["url"] } },
                 { name: "getWeather", description: "Gets the current weather for a specific location.", parameters: { type: Type.OBJECT, properties: { location: { type: Type.STRING } }, required: ["location"] } },
                 { name: "androidPerformAction", description: "Perform an Android system action via ADB.", parameters: { type: Type.OBJECT, properties: { action: { type: Type.STRING } }, required: ["action"] } },
                 { name: "startCamera", description: "Starts the camera feed for vision analysis." },
-                { name: "startScreenShare", description: "Starts screen sharing for vision analysis." }
+                { name: "startScreenShare", description: "Starts screen sharing for vision analysis." },
+                // PDF automation tools
+                { name: "open_app", description: "Opens a native desktop application by name.", parameters: { type: Type.OBJECT, properties: { app_name: { type: Type.STRING, description: "The name of the application to open." } }, required: ["app_name"] } },
+                { name: "close_app", description: "Closes a running application by name.", parameters: { type: Type.OBJECT, properties: { app_name: { type: Type.STRING, description: "The name of the application to close." } }, required: ["app_name"] } },
+                { name: "ghost_type", description: "Simulates keyboard typing of text.", parameters: { type: Type.OBJECT, properties: { text: { type: Type.STRING, description: "The text to type out." } }, required: ["text"] } },
+                { name: "execute_sequence", description: "Executes a sequence of chained macro actions.", parameters: { type: Type.OBJECT, properties: { json_actions: { type: Type.STRING, description: "JSON string containing an array of actions." } }, required: ["json_actions"] } },
+                { name: "press_shortcut", description: "Simulates a keyboard shortcut.", parameters: { type: Type.OBJECT, properties: { key: { type: Type.STRING, description: "The keyboard key to press." }, modifiers: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Modifier keys like Ctrl, Alt, Shift." } }, required: ["key"] } },
+                { name: "click_on_screen", description: "Clicks at specific coordinate ratios (0 to 1000).", parameters: { type: Type.OBJECT, properties: { x: { type: Type.NUMBER, description: "X coordinate ratio from 0 to 1000." }, y: { type: Type.NUMBER, description: "Y coordinate ratio from 0 to 1000." } }, required: ["x", "y"] } },
+                { name: "scroll_screen", description: "Simulates scrolling the active window.", parameters: { type: Type.OBJECT, properties: { direction: { type: Type.STRING, description: "The direction to scroll, 'up' or 'down'." }, amount: { type: Type.NUMBER, description: "The scroll speed or lines." } }, required: ["direction"] } },
+                { name: "run_terminal", description: "Runs a PowerShell/shell command in a specific path.", parameters: { type: Type.OBJECT, properties: { command: { type: Type.STRING, description: "The command to run." }, path: { type: Type.STRING, description: "The working directory." } }, required: ["command"] } },
+                { name: "send_whatsapp", description: "Launches and sends a WhatsApp message with optional attachments.", parameters: { type: Type.OBJECT, properties: { name: { type: Type.STRING, description: "Recipient name." }, message: { type: Type.STRING, description: "Message body text." }, file_path: { type: Type.STRING, description: "Optional file path." } }, required: ["name", "message"] } },
+                { name: "play_spotify_music", description: "Launches Spotify and plays a song.", parameters: { type: Type.OBJECT, properties: { song_name: { type: Type.STRING, description: "Name of the song." } }, required: ["song_name"] } },
+                { name: "set_volume", description: "Adjusts system sound volume.", parameters: { type: Type.OBJECT, properties: { level: { type: Type.NUMBER, description: "Sound volume level 0-100." } }, required: ["level"] } },
+                { name: "take_screenshot", description: "Takes a desktop screenshot." }
               ]
             }],
             generationConfig: {
@@ -152,12 +172,11 @@ export class GeminiLiveService {
         noiseSuppression: this.isNoiseReductionEnabled,
         echoCancellation: true,
         autoGainControl: true,
-        sampleRate: 16000,
         channelCount: 1
       }
     });
 
-    this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+    this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
     this.analyser = this.audioContext.createAnalyser();
     this.analyser.fftSize = 256;
     this.analyser.smoothingTimeConstant = 0.5;
@@ -172,13 +191,8 @@ export class GeminiLiveService {
           process(inputs, outputs, parameters) {
             const input = inputs[0];
             if (input.length > 0) {
-              const channelData = input[0];
-              const pcm16 = new Int16Array(channelData.length);
-              for (let i = 0; i < channelData.length; i++) {
-                const s = Math.max(-1, Math.min(1, channelData[i]));
-                pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-              }
-              this.port.postMessage(pcm16.buffer, [pcm16.buffer]);
+              // Post the raw float32 channel data
+              this.port.postMessage(input[0]);
             }
             return true;
           }
@@ -192,15 +206,27 @@ export class GeminiLiveService {
       const source = this.audioContext.createMediaStreamSource(this.mediaStream);
       const workletNode = new AudioWorkletNode(this.audioContext, 'pcm-processor');
       
+      const inputSampleRate = this.audioContext.sampleRate;
       workletNode.port.onmessage = (e) => {
         if (this.isMicMuted || !this.isConnected || !this.session) return;
-        const base64 = this.arrayBufferToBase64(e.data);
+        
+        // e.data is the raw Float32Array from the microphone
+        const floatData = e.data;
+        // Downsample to 16000
+        const downsampled = downsampleTo16000(floatData, inputSampleRate);
+        // Convert to 16-bit PCM
+        const pcmBuffer = floatTo16BitPCM(downsampled);
+        // Encode to base64
+        const base64 = this.arrayBufferToBase64(pcmBuffer);
+        
         try {
           this.session.send(JSON.stringify({
             realtimeInput: {
-              mediaChunks: [{
-                mimeType: "audio/pcm;rate=16000",
-                data: base64
+              chunks: [{
+                inlineData: {
+                  mimeType: "audio/pcm;rate=16000",
+                  data: base64
+                }
               }]
             }
           }));
@@ -218,7 +244,7 @@ export class GeminiLiveService {
   private async handleMessage(msg: any) {
     if (msg.serverContent?.modelTurn?.parts) {
       for (const part of msg.serverContent.modelTurn.parts) {
-        if (part.inlineData?.mimeType?.startsWith('audio/')) {
+        if (part.inlineData?.data) {
           const isMutedTTS = localStorage.getItem('iris_mute_ai_voice') === 'true';
           if (!isMutedTTS) {
              await this.playAudio(part.inlineData.data);
@@ -290,25 +316,49 @@ export class GeminiLiveService {
   }
 
   private async playAudio(base64: string) {
-    if (!this.audioContext) this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+    if (!this.audioContext) {
+      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
     try {
-      const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-      const pcm = new Int16Array(bytes.buffer);
-      const float = new Float32Array(pcm.length);
-      for (let i = 0; i < pcm.length; i++) float[i] = pcm[i] / 32768;
-      const buffer = this.audioContext.createBuffer(1, float.length, 24000);
-      
-      // Fallback logic for various browser WebView environments
-      if (typeof buffer.copyToChannel === 'function') {
-        buffer.copyToChannel(float, 0);
-      } else {
-        buffer.getChannelData(0).set(float);
-      }
-      
+      const float32Data = base64ToFloat32(base64);
+      if (float32Data.length === 0) return;
+
+      const buffer = this.audioContext.createBuffer(1, float32Data.length, 24000);
+      buffer.getChannelData(0).set(float32Data);
+
       const src = this.audioContext.createBufferSource();
       src.buffer = buffer;
-      src.connect(this.audioContext.destination);
-      src.start();
+      
+      if (this.analyser) {
+        src.connect(this.analyser);
+        this.analyser.connect(this.audioContext.destination);
+      } else {
+        src.connect(this.audioContext.destination);
+      }
+      
+      const now = this.audioContext.currentTime;
+      if (this.nextStartTime < now) {
+        this.nextStartTime = now + 0.05;
+      }
+      
+      this.activeSources.add(src);
+      if (!this.isSpeaking) {
+        this.isSpeaking = true;
+        if (this.onSpeakingChange) this.onSpeakingChange(true);
+      }
+      
+      src.onended = () => {
+        this.activeSources.delete(src);
+        if (this.activeSources.size === 0) {
+          if (this.isSpeaking) {
+            this.isSpeaking = false;
+            if (this.onSpeakingChange) this.onSpeakingChange(false);
+          }
+        }
+      };
+      
+      src.start(this.nextStartTime);
+      this.nextStartTime += buffer.duration;
     } catch (e) {
       console.error("Audio playback error:", e);
     }
@@ -335,7 +385,14 @@ export class GeminiLiveService {
   }
 
   public stopPlayback() {
-    // Basic stop
+    this.activeSources.forEach(src => {
+      try { src.stop(); } catch {}
+    });
+    this.activeSources.clear();
+    if (this.isSpeaking) {
+      this.isSpeaking = false;
+      if (this.onSpeakingChange) this.onSpeakingChange(false);
+    }
   }
 
   public sendText(text: string) {
@@ -357,9 +414,11 @@ export class GeminiLiveService {
     const data = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
     this.session.send(JSON.stringify({
       realtimeInput: {
-        mediaChunks: [{
-          mimeType: "image/jpeg",
-          data: data
+        chunks: [{
+          inlineData: {
+            mimeType: "image/jpeg",
+            data: data
+          }
         }]
       }
     }));
@@ -372,9 +431,11 @@ export class GeminiLiveService {
     const data = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
     this.session.send(JSON.stringify({
       realtimeInput: {
-        mediaChunks: [{
-          mimeType: mimeType || "image/jpeg",
-          data: data
+        chunks: [{
+          inlineData: {
+            mimeType: mimeType || "image/jpeg",
+            data: data
+          }
         }]
       }
     }));
@@ -387,6 +448,15 @@ export class GeminiLiveService {
     }
     this.isConnected = false;
     
+    this.activeSources.forEach(src => {
+      try { src.stop(); } catch {}
+    });
+    this.activeSources.clear();
+    if (this.isSpeaking) {
+      this.isSpeaking = false;
+      if (this.onSpeakingChange) this.onSpeakingChange(false);
+    }
+
     if (this.mediaStream) {
       this.mediaStream.getTracks().forEach(track => track.stop());
       this.mediaStream = null;

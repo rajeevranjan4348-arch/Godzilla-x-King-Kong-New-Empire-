@@ -15,7 +15,7 @@ export class GeminiVisionService {
                      : 'image/jpeg';
 
     const res = await this.ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.5-flash',
       contents: [{
         role: 'user',
         parts: [

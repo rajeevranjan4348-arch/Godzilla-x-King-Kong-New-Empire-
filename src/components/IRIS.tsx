@@ -1,4 +1,5 @@
 import { useState, useEffect, Suspense, lazy, useRef } from 'react'
+import AskIrisView from '../views/AskIris'
 import { motion, AnimatePresence } from 'motion/react'
 import {
   RiWifiLine,
@@ -50,7 +51,7 @@ import ViewSkeleton from './ViewSkelrton'
 import DashboardView from '../views/Dashboard'
 import PhoneView from '../views/Phone'
 import HistoryView from '../views/History'
-import { GoogleGenAI } from '@google/genai'
+import { GoogleGenAI, Type } from '@google/genai'
 import Fuse from 'fuse.js'
 import { playClick, playTabSwitch, playNotification } from '../utils/audio'
 import { GlobalSearch } from './GlobalSearch'
@@ -81,7 +82,6 @@ const AgentView = lazy(() => import('../views/Agent'))
 const BrowserView = lazy(() => import('../views/Browser'))
 const SystemView = lazy(() => import('../views/System'))
 const PluginsView = lazy(() => import('../views/Plugins'))
-const AskIrisView = lazy(() => import('../views/AskIris'))
 
 export interface IrisProps {
   isSystemActive: boolean
@@ -111,7 +111,8 @@ export interface IrisProps {
   setMessages?: React.Dispatch<React.SetStateAction<any[]>>
 }
 
-import AppsView from '../views/Apps'
+import AppsView, { APPS } from '../views/Apps'
+import { APP_SYNONYMS } from '../hooks/useVoiceCommands'
 import MemoryView from '../views/Memory'
 import CodingView from '../views/Coding'
 import ChatView from '../views/Chat'
@@ -135,6 +136,7 @@ const IRIS = (props: IrisProps) => {
   const addSysNotification = useNotificationStore(state => state.addNotification)
   
   const activeTabRef = useRef(activeTab)
+  const commandHandlerRef = useRef<((command: string, args: any) => any) | null>(null)
   useEffect(() => {
     activeTabRef.current = activeTab
   }, [activeTab])
@@ -370,6 +372,60 @@ const IRIS = (props: IrisProps) => {
           setActiveTab('SETTINGS')
           notify('Opened Command Center', 'info')
           break
+        case 'openApp':
+          const targetApp = args.appName?.toLowerCase() || '';
+          // Check if it's a main system tab first
+          const systemTabMap: Record<string, string> = {
+            chat: 'CHAT', messages: 'CHAT', conversation: 'CHAT', talk: 'CHAT', chatting: 'CHAT',
+            notes: 'MEMORY', memory: 'MEMORY', notepad: 'MEMORY', journal: 'MEMORY', diary: 'MEMORY', brain: 'MEMORY', remember: 'MEMORY', keep: 'MEMORY',
+            tasks: 'TASKS', todo: 'TASKS', reminders: 'TASKS', list: 'TASKS', chores: 'TASKS', errands: 'TASKS',
+            gallery: 'GALLERY', vault: 'GALLERY', photos: 'GALLERY', images: 'GALLERY', pictures: 'GALLERY', pics: 'GALLERY', album: 'GALLERY',
+            phone: 'PHONE', calls: 'PHONE', dialer: 'PHONE', contacts: 'PHONE', call: 'PHONE',
+            settings: 'SETTINGS', command_center: 'SETTINGS', preferences: 'SETTINGS', options: 'SETTINGS', config: 'SETTINGS', setup: 'SETTINGS',
+            dashboard: 'DASHBOARD', home: 'DASHBOARD', main: 'DASHBOARD', menu: 'DASHBOARD', overview: 'DASHBOARD',
+            apps: 'APPS', applications: 'APPS', programs: 'APPS', software: 'APPS', tools: 'APPS',
+            coding: 'CODING', code: 'CODING', programming: 'CODING', dev: 'CODING', development: 'CODING', scripting: 'CODING', editor: 'CODING',
+            workflows: 'WORKFLOWS', workflow: 'WORKFLOWS', automations: 'WORKFLOWS', scripts: 'WORKFLOWS', macros: 'WORKFLOWS',
+            calendar: 'CALENDAR', schedule: 'CALENDAR', agenda: 'CALENDAR', events: 'CALENDAR', meetings: 'CALENDAR', planner: 'CALENDAR',
+            documents: 'DOCUMENTS', files: 'DOCUMENTS', docs: 'DOCUMENTS', folders: 'DOCUMENTS', pdfs: 'DOCUMENTS',
+            terminal: 'TERMINAL', console: 'TERMINAL', shell: 'TERMINAL', prompt: 'TERMINAL', cmd: 'TERMINAL', command_line: 'TERMINAL',
+            ask_iris: 'ASK_IRIS', ask: 'ASK_IRIS', query: 'ASK_IRIS', queries: 'ASK_IRIS', question: 'ASK_IRIS', answers: 'ASK_IRIS', ask_assistant: 'ASK_IRIS',
+            browser: 'BROWSER', web: 'BROWSER', internet: 'BROWSER', chrome: 'BROWSER', explorer: 'BROWSER', safari: 'BROWSER', firefox: 'BROWSER', web_browser: 'BROWSER',
+            system_status: 'SYSTEM', system_info: 'SYSTEM', system: 'SYSTEM', cpu: 'SYSTEM', hardware: 'SYSTEM', performance: 'SYSTEM', resources: 'SYSTEM', diagnostics: 'SYSTEM',
+            plugin: 'PLUGINS', plugins: 'PLUGINS', addons: 'PLUGINS', integrations: 'PLUGINS', extensions: 'PLUGINS', connections: 'PLUGINS',
+            agent: 'AGENT', autonomous_agent: 'AGENT', goose: 'AGENT', bot: 'AGENT', robot: 'AGENT', ai_model: 'AGENT',
+            profile: 'PROFILE', my_profile: 'PROFILE', user_profile: 'PROFILE', user_info: 'PROFILE', me: 'PROFILE', account: 'PROFILE', avatar: 'PROFILE',
+            about_iris: 'ABOUT', about: 'ABOUT', version: 'ABOUT', credits: 'ABOUT', system_details: 'ABOUT',
+            help: 'HELP', guide: 'HELP', manual: 'HELP', tutorial: 'HELP', support: 'HELP', how_to_use: 'HELP', instructions: 'HELP'
+          };
+
+          const cleanTargetApp = targetApp.replace(/[\s\-_]+/g, '_');
+          if (systemTabMap[cleanTargetApp] || systemTabMap[targetApp]) {
+            const destTab = systemTabMap[cleanTargetApp] || systemTabMap[targetApp];
+            setActiveTab(destTab);
+            notify(`Opening ${destTab.charAt(0) + destTab.slice(1).toLowerCase()}`, 'info');
+            return { status: 'success', opened: destTab };
+          }
+
+          // Check sub-apps list
+          const matchedApp = APPS.find((a: any) => 
+            a.id.toLowerCase() === targetApp || 
+            a.name.toLowerCase() === targetApp ||
+            (APP_SYNONYMS[a.id] && APP_SYNONYMS[a.id].some((syn: string) => syn.toLowerCase() === targetApp))
+          );
+
+          if (matchedApp) {
+            setActiveTab('APPS');
+            localStorage.setItem('iris_active_app', matchedApp.id);
+            window.dispatchEvent(new CustomEvent('launch-app', { detail: { appId: matchedApp.id } }));
+            notify(`Opening ${matchedApp.name}`, 'success');
+            return { status: 'success', opened: matchedApp.name };
+          } else {
+            // Fallback: search general tab or open App Tab itself
+            setActiveTab('APPS');
+            notify(`Opening Apps list`, 'info');
+            return { status: 'success', opened: 'Apps' };
+          }
         case 'adjustVolume':
           notify(`System volume adjusted to ${args.level}%`, 'success')
           break
@@ -662,10 +718,73 @@ const IRIS = (props: IrisProps) => {
               }
             });
           break
+        case 'open_app':
+          notify(`System Automation: Opening ${args.app_name}...`, 'success');
+          useAuditStore.getState().logAction('Open App', args, 'success');
+          commandHandler('openApp', { appName: args.app_name });
+          break
+        case 'close_app':
+          notify(`System Automation: Closing ${args.app_name}...`, 'info');
+          useAuditStore.getState().logAction('Close App', args, 'success');
+          break
+        case 'ghost_type':
+          notify(`System Ghost Keyboard: Typing "${args.text}"`, 'success');
+          useAuditStore.getState().logAction('Ghost Keyboard: Type', args, 'success');
+          break
+        case 'execute_sequence':
+          notify(`System Automation: Executing sequence macro...`, 'info');
+          try {
+            const parsed = JSON.parse(args.json_actions);
+            notify(`Running ${parsed.length} automated steps...`, 'success');
+          } catch (e) {
+            notify(`Running sequence: ${args.json_actions}`, 'success');
+          }
+          useAuditStore.getState().logAction('Execute Sequence Macro', args, 'success');
+          break
+        case 'press_shortcut':
+          {
+            const modifiersStr = args.modifiers ? args.modifiers.join('+') + '+' : '';
+            notify(`System Keyboard Shortcut: Pressing ${modifiersStr}${args.key}`, 'success');
+            useAuditStore.getState().logAction('Keyboard Shortcut', args, 'success');
+          }
+          break
+        case 'click_on_screen':
+          notify(`System Ghost Mouse: Clicking coordinate ratio (X: ${args.x}, Y: ${args.y})`, 'success');
+          useAuditStore.getState().logAction('Ghost Mouse Click', args, 'success');
+          break
+        case 'scroll_screen':
+          notify(`System Ghost Mouse: Scrolling ${args.direction} by ${args.amount || 100}px`, 'success');
+          useAuditStore.getState().logAction('Ghost Mouse Scroll', args, 'success');
+          break
+        case 'run_terminal':
+          notify(`System Terminal: Running command [${args.command}] in path [${args.path || './'}]`, 'info');
+          setActiveTab('TERMINAL');
+          useAuditStore.getState().logAction('Terminal Command', args, 'success');
+          break
+        case 'send_whatsapp':
+          notify(`System Automation: Sending WhatsApp message to [${args.name}]`, 'success');
+          window.open(`https://web.whatsapp.com/send?text=${encodeURIComponent(args.message)}`, '_blank');
+          useAuditStore.getState().logAction('Send WhatsApp', args, 'success');
+          break
+        case 'play_spotify_music':
+          notify(`System Automation: Playing [${args.song_name}] on Spotify`, 'success');
+          window.open(`https://open.spotify.com/search/${encodeURIComponent(args.song_name)}`, '_blank');
+          useAuditStore.getState().logAction('Spotify Play', args, 'success');
+          break
+        case 'set_volume':
+          notify(`System Sound Volume updated to ${args.level}%`, 'success');
+          useAuditStore.getState().logAction('Set Volume', args, 'success');
+          break
+        case 'take_screenshot':
+          notify(`System Automation: Capture screenshot. Saving frame...`, 'success');
+          useAuditStore.getState().logAction('Take Screenshot', args, 'success');
+          break
         default:
           console.log('Unknown command:', command)
       }
     }
+
+    commandHandlerRef.current = commandHandler
 
     if (props.registerCommandHandler) {
       props.registerCommandHandler(commandHandler)
@@ -681,14 +800,57 @@ const IRIS = (props: IrisProps) => {
       const apiKey = localStorage.getItem('iris_custom_api_key') || import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || 'smmPrdCbtrh6hSdBujbXtWoVWEi463poRTD4eYBk9Ugj0LZXGgxmh3mybXgc';
       const ai = new GoogleGenAI({ apiKey });
       const res = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.5-flash',
         contents: text,
         config: {
             systemInstruction: "You are IRIS, an advanced AI assistant. Keep responses brief and conversational. If asked about current events, search Google.",
-            tools: [{ googleSearch: {} }]
+            tools: [
+              { googleSearch: {} },
+              {
+                functionDeclarations: [
+                  {
+                    name: 'openApp',
+                    description: "Opens a specific application or tab in the system, such as Gmail, YouTube, Calendar, Notes, ChatGPT, Google Maps, Chrome, Google Drive, WhatsApp, etc.",
+                    parameters: {
+                      type: Type.OBJECT,
+                      properties: {
+                        appName: {
+                          type: Type.STRING,
+                          description: "The name of the application to open, e.g. 'Gmail', 'YouTube', 'Notes', 'Calendar', 'ChatGPT'."
+                        }
+                      },
+                      required: ['appName']
+                    }
+                  }
+                ]
+              }
+            ],
+            toolConfig: { includeServerSideToolInvocations: true }
         }
       });
-      const reply = res.text;
+
+      const functionCalls = res.functionCalls;
+      if (functionCalls && functionCalls.length > 0) {
+        const fc = functionCalls[0];
+        if (fc.name === 'openApp') {
+          const args = fc.args as any;
+          if (commandHandlerRef.current) {
+            commandHandlerRef.current('openApp', args);
+          }
+          const reply = `I've opened ${args.appName || 'the application'} for you.`;
+          setChatHistory(prev => [...prev, { role: 'assistant', content: reply }]);
+          
+          const isTtsEnabled = localStorage.getItem('iris_mute_ai_voice') !== 'true';
+          if (isTtsEnabled && 'speechSynthesis' in window) {
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(reply);
+            window.speechSynthesis.speak(utterance);
+          }
+          return;
+        }
+      }
+
+      const reply = res.text || 'I could not process that request.';
       
       setChatHistory(prev => [...prev, { role: 'assistant', content: reply }]);
       
@@ -1012,7 +1174,17 @@ const IRIS = (props: IrisProps) => {
             {activeTab === 'MEMORY' && <MemoryView />}
             
             <Suspense fallback={<ViewSkeleton />}>
-              {activeTab === 'ASK_IRIS' && <AskIrisView onAskIris={handleAskIris} isSystemActive={props.isSystemActive} chatHistory={chatHistory} />}
+              {activeTab === 'ASK_IRIS' && (
+                <AskIrisView 
+                  onAskIris={handleAskIris} 
+                  isSystemActive={props.isSystemActive} 
+                  chatHistory={chatHistory} 
+                  onClearHistory={() => {
+                    setChatHistory([{ role: 'assistant', content: 'IRIS System Initialized. Awaiting input.' }])
+                    localStorage.removeItem('iris_chat_sessions')
+                  }}
+                />
+              )}
               {activeTab === 'CODING' && <CodingView />}
               {activeTab === 'BROWSER' && <BrowserView />}
               {activeTab === 'SYSTEM' && <SystemView />}
